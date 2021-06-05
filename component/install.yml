@@ -19,7 +19,7 @@
   - name: cleanup old pkg dirs
     shell: "rm {{rpm_path}} 2>/dev/null"
     ignore_errors: True
-  - pam_limits: domain=root limit_type='-' limit_item=core value=unlimited
+#  - pam_limits: domain=root limit_type='-' limit_item=core value=unlimited
   - name: rm locks
     shell: "rm -f /var/lib/rpm/.rpm.lock"
     ignore_errors: True
