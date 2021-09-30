@@ -158,4 +158,6 @@
     shell: iptables -F
   - name: wait for install done
     wait_for: port=8091 delay=10
-
+  - name: intall lsof
+    package: name=lsof state=present
+    ignore_errors: True
