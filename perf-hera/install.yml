@@ -54,7 +54,7 @@
       shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
       ignore_errors: True
 
-- hosts: perf-demeter
+- hosts: perf-hera
   serial: 1
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
@@ -71,7 +71,7 @@
     - name: download binary
       get_url: url="{{build_url}}" dest="{{rpm_path}}"
 
-- hosts: perf-demeter
+- hosts: perf-hera
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
     build_no:  "{{BUILD_NO|default(2601)}}"
