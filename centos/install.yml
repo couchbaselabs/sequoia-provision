@@ -128,7 +128,6 @@
       mode: 777
   - name: set /data to be owned by couchbase
     shell: "chown -R couchbase:couchbase /data"
-  - name: chmod /data to 777
   - name: set /data to be owned by couchbase
     shell: "chown -R couchbase:couchbase /data"
   - name: chmod /data to 777
