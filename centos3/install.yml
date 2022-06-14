@@ -96,6 +96,27 @@
       owner: couchbase
       group: couchbase
       mode: 777
+  - name: create backup s3 location
+    file:
+      path: /data/s3
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  - name: create backup gcp location
+    file:
+      path: /data/gcp
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  - name: create backup azure location
+    file:
+      path: /data/azure
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
   - name: set /data to be owned by couchbase
     shell: "chown -R couchbase:couchbase /data"
   - name: chmod /data to 777
