@@ -63,6 +63,14 @@
   - debug: msg="Download {{build_url}}"
   - name: download binary
     get_url: url="{{build_url}}" dest="{{deb_path}}"
+  - name: Remove config file
+    shell: "rm -f /etc/couchbase.d/config_profile"
+  - name: Make a new couchbase.d folder
+    shell: "mkdir -p /etc/couchbase.d"
+  - name: set up serverless config
+    shell: "echo 'serverless' > /etc/couchbase.d/config_profile"
+  - name: change permissions for the serverless config file
+    shell: "chmod ugo+r /etc/couchbase.d/config_profile"
   - name: install couchbase
     apt: deb="{{deb_path}}"
   - name: wait for install done
