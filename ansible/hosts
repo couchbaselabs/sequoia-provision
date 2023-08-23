@@ -270,10 +270,10 @@
 [windows2]
 
 [syncgateways]
-172.23.99.23
+172.23.105.234
 
 [elasticsearch]
-172.23.99.23
+172.23.105.234
 
 [syncgateways2]
 172.23.104.254
