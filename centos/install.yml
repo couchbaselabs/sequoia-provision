@@ -167,13 +167,5 @@
   tasks:
   - name: install couchbase
     apt: name="{{deb_path}}"
-  - name: alt start 
-    shell: /opt/couchbase/etc/couchbase_init.d start
-    ignore_errors: True
-  - name: flush iptables 
-    shell: iptables -F
   - name: wait for install done
     wait_for: port=8091 delay=10
-  - name: intall lsof
-    package: name=lsof state=present
-    ignore_errors: True
