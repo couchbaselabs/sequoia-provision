@@ -166,6 +166,6 @@
   remote_user: root
   tasks:
   - name: install couchbase
-    apt: name="{{deb_path}}"
+    apt: deb="{{deb_path}}"
   - name: wait for install done
     wait_for: port=8091 delay=10
