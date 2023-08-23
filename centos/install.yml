@@ -12,7 +12,7 @@
     couchbase_server_primary_node:
   remote_user: root
   tasks:
-  - name: SYNC GATEWAY |  Download sync_gateway rpm {{sgw_package_url}}
+  - name: SYNC GATEWAY |  Download sync_gateway dpkg {{sgw_package_url}}
     get_url: url={{sgw_package_url}} dest=/tmp/{{sgw_package}} validate_certs=False
 
 # Install sync_gateway
@@ -26,9 +26,9 @@
     sgw_package: "couchbase-sync-gateway-{{sgw_flavor}}_{{sgw_ver_no}}-{{sgw_build_no}}_x86_64.deb"
     sgw_package_url: "{{sgw_base_url}}/{{sgw_package }}"
   tasks:
-  - name: SYNC GATEWAY | Install sync_gateway rpm
+  - name: SYNC GATEWAY | Install sync_gateway dpkg
     become: yes
-    shell: rpm -i /tmp/{{sgw_package}}
+    shell: dpkg -i /tmp/{{sgw_package}}
 
 - hosts: elasticsearch
   tasks:
