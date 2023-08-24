@@ -74,6 +74,9 @@
   - name: rm locks
     shell: "rm /var/lib/dpkg/lock"
     ignore_errors: True
+  - name: rm front end locks
+    shell: " rm /var/lib/dpkg/lock-frontend"
+    ignore_errors: True
   - name: configure
     shell: "dpkg --configure -a"
   - name: stop couchbase
