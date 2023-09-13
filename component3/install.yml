@@ -36,6 +36,8 @@
     shell: "rm -rf /data/*"
   - name: rm index dir
     shell: "rm -rf /index/*"
+  - name : rm serverless config
+    shell: "rm -rf /etc/couchbase.d/config_profile"
   - name: remove all hidden files
     shell: "rm -rf /data/.*"
     ignore_errors: True
