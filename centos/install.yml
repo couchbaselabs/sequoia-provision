@@ -7,12 +7,12 @@
     sgw_build_no: "{{SGW_BUILD_NO|default('374')}}"
     sgw_flavor:  "{{SGW_FLAVOR|default('enterprise')}}"
     sgw_base_url: "http://172.23.126.166/builds/latestbuilds/sync_gateway/{{sgw_ver_no}}/{{sgw_build_no}}"
-    sgw_package: "couchbase-sync-gateway-{{sgw_flavor}}_{{sgw_ver_no}}-{{sgw_build_no}}_x86_64.rpm"
+    sgw_package: "couchbase-sync-gateway-{{sgw_flavor}}_{{sgw_ver_no}}-{{sgw_build_no}}_x86_64.deb"
     sgw_package_url: "{{sgw_base_url}}/{{sgw_package }}"
     couchbase_server_primary_node:
   remote_user: root
   tasks:
-  - name: SYNC GATEWAY |  Download sync_gateway rpm {{sgw_package_url}}
+  - name: SYNC GATEWAY |  Download sync_gateway dpkg {{sgw_package_url}}
     get_url: url={{sgw_package_url}} dest=/tmp/{{sgw_package}} validate_certs=False
 
 # Install sync_gateway
@@ -23,12 +23,12 @@
     sgw_build_no: "{{SGW_BUILD_NO|default('374')}}"
     sgw_flavor:  "{{SGW_FLAVOR|default('enterprise')}}"
     sgw_base_url: "http://172.23.126.166/builds/latestbuilds/sync_gateway/{{sgw_ver_no}}/{{sgw_build_no}}"
-    sgw_package: "couchbase-sync-gateway-{{sgw_flavor}}_{{sgw_ver_no}}-{{sgw_build_no}}_x86_64.rpm"
+    sgw_package: "couchbase-sync-gateway-{{sgw_flavor}}_{{sgw_ver_no}}-{{sgw_build_no}}_x86_64.deb"
     sgw_package_url: "{{sgw_base_url}}/{{sgw_package }}"
   tasks:
-  - name: SYNC GATEWAY | Install sync_gateway rpm
+  - name: SYNC GATEWAY | Install sync_gateway dpkg
     become: yes
-    shell: rpm -i /tmp/{{sgw_package}}
+    shell: dpkg -i /tmp/{{sgw_package}}
 
 - hosts: elasticsearch
   tasks:
@@ -41,10 +41,10 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-enterprise-{{ver_no}}-{{build_no}}-centos7.x86_64.rpm"
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
-    rpm_path: "/tmp/couchbase.rpm"
+    deb_path: "/tmp/couchbase.deb"
   remote_user: root
   tasks:
   - name: set vm.swappiness to 0
@@ -69,26 +69,24 @@
   - name: disable thp defrag
     shell: "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
   - name: cleanup old pkg dirs
-    shell: "rm {{rpm_path}} 2>/dev/null"
+    shell: "rm {{deb_path}} 2>/dev/null"
     ignore_errors: True
-  - pam_limits: domain=root limit_type='-' limit_item=core value=unlimited
   - name: rm locks
-    shell: "rm -f /var/lib/rpm/.rpm.lock"
+    shell: "rm /var/lib/dpkg/lock"
     ignore_errors: True
-  - name: stop rpm
-    shell: "killall -9 rpm"
+  - name: rm front end locks
+    shell: "rm /var/lib/dpkg/lock-frontend"
     ignore_errors: True
+  - name: configure
+    shell: "dpkg --configure -a"
   - name: stop couchbase
     shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
   - name: stop memcached
     shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
-  - name: stop epmd
-    shell: "ps aux | grep 'epmd' | awk '{print $2}' | xargs kill -s 9"
-    ignore_errors: True
   - name: uninstall couchbase
-    yum: name=couchbase-server state=absent
+    apt: name=couchbase-server state=absent
   - name: rm opt dir
     shell: "rm -rf /opt/couchbase"
   - name: rm data dir
@@ -148,15 +146,15 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-enterprise-{{ver_no}}-{{build_no}}-centos7.x86_64.rpm"
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
-    rpm_path: "/tmp/couchbase.rpm"
+    deb_path: "/tmp/couchbase.deb"
   remote_user: root
   tasks:
   - debug: msg="Download {{build_url}}"
   - name: download binary
-    get_url: url="{{build_url}}" dest="{{rpm_path}}"
+    get_url: url="{{build_url}}" dest="{{deb_path}}"
  
 - hosts: centos 
   vars:
@@ -164,21 +162,13 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-enterprise-{{ver_no}}-{{build_no}}-centos7.x86_64.rpm"
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
-    rpm_path: "/tmp/couchbase.rpm"
+    deb_path: "/tmp/couchbase.deb"
   remote_user: root
   tasks:
   - name: install couchbase
-    yum: name="{{rpm_path}}"
-  - name: alt start 
-    shell: /opt/couchbase/etc/couchbase_init.d start
-    ignore_errors: True
-  - name: flush iptables 
-    shell: iptables -F
+    apt: deb="{{deb_path}}"
   - name: wait for install done
     wait_for: port=8091 delay=10
-  - name: intall lsof
-    package: name=lsof state=present
-    ignore_errors: True
