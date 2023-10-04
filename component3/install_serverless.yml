@@ -6,7 +6,7 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-debian10_amd64.deb"
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
     deb_path: "/tmp/couchbase.deb"
@@ -54,7 +54,7 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-debian10_amd64.deb"
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
     deb_path: "/tmp/couchbase.deb"

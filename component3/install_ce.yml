@@ -61,7 +61,7 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-community-{{ver_no}}-{{build_no}}-centos7.x86_64.rpm"
+    build_pkg: "couchbase-server-community-{{ver_no}}-{{build_no}}-linux_amd64.rpm"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
     rpm_path: "/tmp/couchbase.rpm"
@@ -77,7 +77,7 @@
     build_no:  "{{BUILD_NO|default(2601)}}"
     flavor:  "{{FLAVOR|default('watson')}}"
     base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
-    build_pkg: "couchbase-server-community-{{ver_no}}-{{build_no}}-centos7.x86_64.rpm"
+    build_pkg: "couchbase-server-community-{{ver_no}}-{{build_no}}-linux_x86_64.rpm"
     url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
     build_url: "{{URL|default(url_var)}}"
     rpm_path: "/tmp/couchbase.rpm"
