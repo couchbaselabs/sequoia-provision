@@ -26,6 +26,8 @@
     shell: "rm -rf /opt/couchbase"
   - name: rm data dir
     shell: "rm -rf /data/*"
+  - name: rm config profile
+    shell: "rm -rf /etc/couchbase.d/*"
   - name: stop memcached
     shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
