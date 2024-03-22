@@ -2,15 +2,14 @@
 - hosts: centos2
   remote_user: root
   tasks:
-  - name: cleanup old pkg dirs
-    shell: "rm /tmp/couchbase-server*rpm* 2>/dev/null"
-    ignore_errors: True
   - name: rm locks
-    shell: "rm -f /var/lib/rpm/.rpm.lock"
+    shell: "rm /var/lib/dpkg/lock"
     ignore_errors: True
-  - name: stop rpm
-    shell: "killall -9 rpm"
+  - name: rm front end locks
+    shell: "rm /var/lib/dpkg/lock-frontend"
     ignore_errors: True
+  - name: configure
+    shell: "dpkg --configure -a"
   - name: stop couchbase
     shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
@@ -21,16 +20,13 @@
     shell: "ps aux | grep 'epmd' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
   - name: uninstall couchbase
-    yum: name=couchbase-server state=absent
+    apt: name=couchbase-server state=absent
   - name: rm opt dir
     shell: "rm -rf /opt/couchbase"
   - name: rm data dir
     shell: "rm -rf /data/*"
   - name: rm config profile
     shell: "rm -rf /etc/couchbase.d/*"
-  - name: stop memcached
-    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
-    ignore_errors: True
   - name: stop couchbase
     shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
@@ -43,6 +39,7 @@
 
 # Remove sync_gateway
 - hosts: syncgateways2
+  become: yes
   tasks:
   # Stop sync_gateway service
   - name: SYNC GATEWAY | Stop sync_gateway service
@@ -74,6 +71,7 @@
 
     # Delete sync_gateway binary
   - name: SYNC GATEWAY | Delete sync_gateway binary
+    become: yes
     file: path=/opt/couchbase-sync-gateway state=absent
     ignore_errors: yes
 
