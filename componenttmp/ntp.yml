@@ -4,16 +4,16 @@
     ver_no: "{{VER|default('4.5.0')}}"
   remote_user: root
   tasks:
-    - name: install ntp
-      yum: name=ntp
-    - service:
-        name: ntpd
-        state: started
-    - service:
-        name: ntpd
-        state: stopped
-    - name: sync
-      shell: "ntpd -gq"
-    - service:
-        name: ntpd
-        state: started
+  - name: install ntp
+    yum: name=ntp
+  - service:
+      name: ntpd
+      state: started
+  - service:
+      name: ntpd
+      state: stopped
+  - name: sync
+    shell: "ntpd -gq"
+  - service:
+      name: ntpd
+      state: started
