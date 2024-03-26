@@ -210,18 +210,18 @@
 
 [centoscomponenttmp]
 # temp addition for Schwarz run
-172.23.107.20
-172.23.106.183
-172.23.106.246
-172.23.106.180
-172.23.106.189
-172.23.107.23
-172.23.107.77
-172.23.107.82
-172.23.107.98
-172.23.107.114
-172.23.97.124
-172.23.97.139
+172.23.96.207 # 8 core 24 GB170 G /data
+172.23.96.231 # 8 core 24 GB 170 G /data
+172.23.120.202 # 8 core 24 GB 65 G /data
+172.23.218.83 # 6 core 16 GB 100 Gig /data
+172.23.218.84 # 6 core 16 GB 100 Gig /data
+172.23.218.85 # 6 core 16 GB 100 Gig /data
+172.23.218.86 # 6 core 16 GB 100 Gig /data
+172.23.218.87 # 6 core 16 GB 100 Gig /data
+172.23.218.88 # 6 core 16 GB 100 Gig /data
+172.23.218.89 #4 core 16 GB 100 Gig /data
+172.23.218.90 #4 core 16 GB 100 Gig /data
+172.23.218.91 #4 core 16 GB 100 Gig /data
 
 [centoscomponentclient]
 172.23.106.161
