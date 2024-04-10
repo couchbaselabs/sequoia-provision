@@ -7,10 +7,10 @@
     - name: install ntp
       yum: name=ntp
     - service:
-        name: ntpd
+        name: ntp
         state: started
     - service:
-        name: ntpd
+        name: ntp
         state: stopped
     - name: sync
       shell: "ntpd -gq"
