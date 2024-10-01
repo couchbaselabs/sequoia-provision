@@ -79,12 +79,6 @@
     ignore_errors: True
   - name: configure
     shell: "dpkg --configure -a"
-  - name: stop couchbase
-    shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
-    ignore_errors: True
-  - name: stop memcached
-    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
-    ignore_errors: True
   - name: uninstall couchbase
     apt: name=couchbase-server state=absent
   - name: rm opt dir
