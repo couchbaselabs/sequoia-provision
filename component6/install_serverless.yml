@@ -1,0 +1,77 @@
+
+---
+- hosts: centoscomponent6
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    build_no:  "{{BUILD_NO|default(2601)}}"
+    flavor:  "{{FLAVOR|default('watson')}}"
+    base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
+    url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
+    build_url: "{{URL|default(url_var)}}"
+    deb_path: "/tmp/couchbase.deb"
+  remote_user: root
+  tasks:
+  - name: set vm.swappiness to 0
+    shell: "echo 0 > /proc/sys/vm/swappiness"
+  - name: cleanup old pkg dirs
+    shell: "rm {{deb_path}} 2>/dev/null"
+    ignore_errors: True
+  - name: rm locks
+    shell: "rm /var/lib/dpkg/lock"
+    ignore_errors: True
+  - name: configure
+    shell: "dpkg --configure -a"
+  - name: stop couchbase
+    shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  - name: stop memcached
+    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  - name: uninstall couchbase
+    apt: name=couchbase-server state=absent
+  - name: rm opt dir
+    shell: "rm -rf /opt/couchbase"
+  - name: rm data dir
+    shell: "rm -rf /data/*"
+  - name: rm index dir
+    shell: "rm -rf /index/*"
+  - name: remove all hidden files
+    shell: "rm -rf /data/.*"
+    ignore_errors: True
+  - name: set /data to be owned by couchbase
+    shell: "chown -R couchbase:couchbase /data"
+  - name: chmod /data to 777
+    shell: "chmod -R 777 /data"
+  - name: stop memcached
+    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+
+- hosts: centoscomponent6
+  serial: 1
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    build_no:  "{{BUILD_NO|default(2601)}}"
+    flavor:  "{{FLAVOR|default('watson')}}"
+    base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
+    url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
+    build_url: "{{URL|default(url_var)}}"
+    deb_path: "/tmp/couchbase.deb"
+  remote_user: root
+  tasks:
+  - debug: msg="Download {{build_url}}"
+  - name: download binary
+    get_url: url="{{build_url}}" dest="{{deb_path}}"
+  - name: Remove config file
+    shell: "rm -f /etc/couchbase.d/config_profile"
+  - name: Make a new couchbase.d folder
+    shell: "mkdir -p /etc/couchbase.d"
+  - name: set up serverless config
+    shell: "echo 'serverless' > /etc/couchbase.d/config_profile"
+  - name: change permissions for the serverless config file
+    shell: "chmod ugo+r /etc/couchbase.d/config_profile"
+  - name: install couchbase
+    apt: deb="{{deb_path}}"
+  - name: wait for install done
+    wait_for: port=8091 delay=10
