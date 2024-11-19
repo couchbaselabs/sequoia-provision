@@ -1,29 +1,26 @@
----
 - hosts: centos3
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
   remote_user: root
   tasks:
   - name: remove systemd-timesyncd
-    yum:
+    apt:
       name: systemd-timesyncd
       state: absent
 
   - name: install ntp
-    yum:
+    apt:
       name: ntp
 
-  - service:
-      name: ntpd
-      state: started
-
-  - service:
+  - name: stop ntpd service
+    service:
       name: ntpd
       state: stopped
 
-  - name: sync
+  - name: sync time
     shell: "ntpd -gq"
 
-  - service:
+  - name: start ntpd service
+    service:
       name: ntpd
       state: started
