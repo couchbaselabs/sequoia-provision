@@ -1,4 +1,4 @@
-- hosts: debian
+- hosts: centos
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
   remote_user: root
