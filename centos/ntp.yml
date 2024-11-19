@@ -1,15 +1,15 @@
-- hosts: centos
+- hosts: debian
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
   remote_user: root
   tasks:
   - name: remove systemd-timesyncd
-    yum:
+    apt:
       name: systemd-timesyncd
       state: absent
 
   - name: install ntp
-    yum:
+    apt:
       name: ntp
 
   - service:
