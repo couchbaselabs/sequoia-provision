@@ -1,0 +1,16 @@
+---
+- hosts: centoscomponent7
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+  remote_user: root
+  tasks:
+  - name: install ntp
+    apt: name=ntp
+  - service:
+      name: ntp
+      state: stopped
+  - name: sync
+    shell: "ntpd -gq"
+  - service:
+      name: ntp
+      state: started
