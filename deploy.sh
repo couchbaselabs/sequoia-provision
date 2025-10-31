@@ -235,7 +235,30 @@ echo ""
 
 # Step 1: Get CB IPs
 if [[ "$USE_QE_CONFIG" == true ]]; then
-    echo -e "${YELLOW}Step 1: Fetching IPs from QE Config Server...${NC}"
+    # Step 1a: Fetch master node IP first
+    echo -e "${YELLOW}Step 1: Fetching master node IP from QE Config Server...${NC}"
+    echo ""
+    
+MASTER_IP=$(./fetch_hosts.sh \
+    --config-server "$CONFIG_SERVER" \
+    --config-port "$CONFIG_PORT" \
+    --config-user "$CONFIG_USER" \
+    --config-pass "$CONFIG_PASS" \
+    --bucket "$BUCKET" \
+    --scope "$SCOPE" \
+    --collection "$COLLECTION" \
+    --pool-id "$CB_POOL_ID" \
+    --query-type master)
+
+    if [[ -z "$MASTER_IP" ]]; then
+        echo -e "${YELLOW}Warning: No master node found${NC}"
+    else
+        echo -e "${GREEN}Found master node: $MASTER_IP${NC}"
+    fi
+    
+    # Step 1b: Fetch remaining CB IPs
+    echo ""
+    echo -e "${YELLOW}Fetching remaining Couchbase Server IPs...${NC}"
     echo ""
 
 CB_IPS=$(./fetch_hosts.sh \
@@ -253,6 +276,25 @@ CB_IPS=$(./fetch_hosts.sh \
         echo -e "${RED}Error: Failed to fetch CB IPs${NC}"
         exit 1
     fi
+    
+    # Create provider YAML file with CB IPs (master first)
+    TEMP_YAML="provider.yaml"
+    echo "---" > "$TEMP_YAML"
+    echo "" >> "$TEMP_YAML"
+    
+    # Add master node first if found
+    if [[ -n "$MASTER_IP" ]]; then
+        echo "$MASTER_IP" >> "$TEMP_YAML"
+    fi
+    
+    # Add remaining CB IPs (excluding master if it was in the list)
+    for ip in $CB_IPS; do
+        if [[ "$ip" != "$MASTER_IP" ]]; then
+            echo "$ip" >> "$TEMP_YAML"
+        fi
+    done
+    echo "" >> "$TEMP_YAML"
+    echo -e "${GREEN}Created provider IP list: $TEMP_YAML${NC}"
 
     # Fetch SGW IPs from QE if specified
     SGW_IPS=""
@@ -274,6 +316,12 @@ CB_IPS=$(./fetch_hosts.sh \
         
         if [[ -z "$SGW_IPS" ]]; then
             echo -e "${YELLOW}Warning: No SGW IPs found (no hosts tagged with 'sgw' in pool)${NC}"
+        else
+            # Add SGW IPs to temporary YAML file with syncgateway: prefix
+            for ip in $SGW_IPS; do
+                echo "syncgateway:$ip" >> "$TEMP_YAML"
+            done
+            echo -e "${GREEN}Added SGW IPs to $TEMP_YAML${NC}"
         fi
     fi
 else
@@ -293,6 +341,28 @@ else
         SGW_HOSTS=$(grep -v '^#' "$SGW_HOSTS_FILE" | grep -v '^[[:space:]]*$' | tr '\n' ' ')
     fi
     SGW_IPS="$SGW_HOSTS"
+    
+    if [[ -z "$CB_IPS" ]]; then
+        echo -e "${RED}Error: No IPs provided${NC}"
+        exit 1
+    fi
+    
+    # Create provider YAML file with manual IPs
+    TEMP_YAML="provider.yaml"
+    echo "---" > "$TEMP_YAML"
+    echo "" >> "$TEMP_YAML"
+    for ip in $CB_IPS; do
+        echo "$ip" >> "$TEMP_YAML"
+    done
+    echo "" >> "$TEMP_YAML"
+    
+    if [[ -n "$SGW_IPS" ]]; then
+        for ip in $SGW_IPS; do
+            echo "syncgateway:$ip" >> "$TEMP_YAML"
+        done
+    fi
+    
+    echo -e "${GREEN}Created provider IP list: $TEMP_YAML${NC}"
 fi
 
 # Step 2: Generate hosts file
@@ -373,6 +443,13 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}   Deployment Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
+
+# Keep provider.yaml for downstream jobs (don't clean up)
+if [[ -f "$TEMP_YAML" ]]; then
+    echo -e "${GREEN}Provider file available for downstream jobs: $TEMP_YAML${NC}"
+    echo ""
+fi
+
 echo "Summary:"
 echo "  CB IPs: $CB_IPS"
 if [[ -n "$SGW_IPS" ]]; then

@@ -116,7 +116,10 @@ if [[ -z "$CONFIG_PASS" ]]; then
 fi
 
 # Build the N1QL query
-if [[ "$QUERY_TYPE" == "sgw" ]]; then
+if [[ "$QUERY_TYPE" == "master" ]]; then
+    # Query for master node: pool_id AND master_node=true
+    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND master_node=true"
+elif [[ "$QUERY_TYPE" == "sgw" ]]; then
     # Query for Sync Gateway hosts: pool_id AND "sgw" tag
     QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" IN poolId"
 else

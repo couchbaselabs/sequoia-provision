@@ -1,7 +1,11 @@
 # Ansible
 ansible/hosts
 ansible/hosts.example
+ansible/hosts.backup.*
 *.retry
+
+# Provider IP list
+provider.yaml
 
 # Logs
 *.log
