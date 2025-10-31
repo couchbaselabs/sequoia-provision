@@ -181,7 +181,8 @@
     sgw_flavor: "{{ SGW_FLAVOR | default('enterprise') }}"
     sgw_base_url: "http://172.23.126.166/builds/latestbuilds/sync_gateway/{{ sgw_ver_no }}/{{ sgw_build_no }}"
     sgw_package: "couchbase-sync-gateway-{{ sgw_flavor }}_{{ sgw_ver_no }}-{{ sgw_build_no }}_x86_64.deb"
-    sgw_package_url: "{{ sgw_base_url }}/{{ sgw_package }}"
+    sgw_url_var: "{{ sgw_base_url }}/{{ sgw_package }}"
+    sgw_package_url: "{{ SGW_URL | default(sgw_url_var) }}"
     perform_uninstall: "{{ PERFORM_SGW_UNINSTALL | default(true) }}"
     perform_install: "{{ PERFORM_SGW_INSTALL | default(true) }}"
   remote_user: root

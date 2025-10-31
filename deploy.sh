@@ -29,9 +29,12 @@ SGW_HOSTS_FILE=""
 # Common options
 CB_VERSION="7.6.8"
 CB_BUILD="7151"
-CB_FLAVOR="trinity"
+CB_FLAVOR=""  # Will be auto-computed from version if not specified
+CB_INSTALL_URL=""
 SGW_VERSION="3.3.0"
 SGW_BUILD="271"
+SGW_INSTALL_URL=""
+WITH_SGW=false
 SKIP_UNINSTALL=false
 DRY_RUN=false
 HOSTS_FILE="ansible/hosts"
@@ -73,10 +76,13 @@ INPUT OPTIONS (Choose one):
 VERSION OPTIONS:
     --cb-version VERSION            CB Server version (default: 7.6.8)
     --cb-build BUILD                CB Server build (default: 7151)
-    --cb-flavor FLAVOR              CB Server flavor (default: trinity)
+    --cb-flavor FLAVOR              CB Server flavor (auto-detected from version, can override)
+    --cb-install-url URL            Custom CB install URL (overrides version/build/flavor)
     
+    --with-sgw                      Also install Sync Gateway on hosts tagged with 'sgw'
     --sgw-version VERSION           SGW version (default: 3.3.0)
     --sgw-build BUILD               SGW build (default: 271)
+    --sgw-install-url URL           Custom SGW install URL (overrides version/build)
 
 BEHAVIOR OPTIONS:
     --skip-uninstall                Skip uninstall step
@@ -127,8 +133,10 @@ while [[ $# -gt 0 ]]; do
         --cb-version) CB_VERSION="$2"; shift 2 ;;
         --cb-build) CB_BUILD="$2"; shift 2 ;;
         --cb-flavor) CB_FLAVOR="$2"; shift 2 ;;
+        --cb-install-url) CB_INSTALL_URL="$2"; shift 2 ;;
         --sgw-version) SGW_VERSION="$2"; shift 2 ;;
         --sgw-build) SGW_BUILD="$2"; shift 2 ;;
+        --sgw-install-url) SGW_INSTALL_URL="$2"; shift 2 ;;
         --skip-uninstall) SKIP_UNINSTALL=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --hosts-file) HOSTS_FILE="$2"; shift 2 ;;
@@ -141,6 +149,37 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Auto-compute CB_FLAVOR from CB_VERSION if not explicitly set
+if [[ -z "$CB_FLAVOR" ]]; then
+    # Default flavor
+    CB_FLAVOR="sherlock"
+    
+    # Determine flavor based on version
+    if echo "$CB_VERSION" | grep -q "^6\.5"; then
+        CB_FLAVOR="mad-hatter"
+    elif echo "$CB_VERSION" | grep -q "^6\.6"; then
+        CB_FLAVOR="mad-hatter"
+    elif echo "$CB_VERSION" | grep -q "^7\.0"; then
+        CB_FLAVOR="cheshire-cat"
+    elif echo "$CB_VERSION" | grep -q "^7\.1"; then
+        CB_FLAVOR="neo"
+    elif echo "$CB_VERSION" | grep -q "^7\.2"; then
+        CB_FLAVOR="neo"
+    elif echo "$CB_VERSION" | grep -q "^7\.5"; then
+        CB_FLAVOR="elixir"
+    elif echo "$CB_VERSION" | grep -q "^7\.6"; then
+        CB_FLAVOR="trinity"
+    elif echo "$CB_VERSION" | grep -q "^7\.7"; then
+        CB_FLAVOR="cypher"
+    elif echo "$CB_VERSION" | grep -q "^8\.0"; then
+        CB_FLAVOR="morpheus"
+    elif echo "$CB_VERSION" | grep -q "^8\.1"; then
+        CB_FLAVOR="totoro"
+    fi
+    
+    echo -e "${GREEN}Auto-detected CB_FLAVOR: $CB_FLAVOR (from version $CB_VERSION)${NC}"
+fi
 
 # Validate input method
 USE_QE_CONFIG=false
@@ -298,10 +337,22 @@ INSTALL_CMD="$INSTALL_CMD -e \"FLAVOR=$CB_FLAVOR\""
 INSTALL_CMD="$INSTALL_CMD -e \"VER=$CB_VERSION\""
 INSTALL_CMD="$INSTALL_CMD -e \"BUILD_NO=$CB_BUILD\""
 
+# Add custom install URL if provided
+if [[ -n "$CB_INSTALL_URL" ]]; then
+    INSTALL_CMD="$INSTALL_CMD -e \"URL=$CB_INSTALL_URL\""
+    echo -e "${GREEN}Using custom CB install URL: $CB_INSTALL_URL${NC}"
+fi
+
 if [[ -n "$SGW_IPS" ]]; then
     INSTALL_CMD="$INSTALL_CMD -e \"sgw_target_hosts=$SGW_GROUP_NAME\""
     INSTALL_CMD="$INSTALL_CMD -e \"SGW_VER=$SGW_VERSION\""
     INSTALL_CMD="$INSTALL_CMD -e \"SGW_BUILD_NO=$SGW_BUILD\""
+    
+    # Add custom SGW install URL if provided
+    if [[ -n "$SGW_INSTALL_URL" ]]; then
+        INSTALL_CMD="$INSTALL_CMD -e \"SGW_URL=$SGW_INSTALL_URL\""
+        echo -e "${GREEN}Using custom SGW install URL: $SGW_INSTALL_URL${NC}"
+    fi
 else
     # Skip SGW play by targeting non-existent host
     INSTALL_CMD="$INSTALL_CMD --limit '$CB_GROUP_NAME'"
