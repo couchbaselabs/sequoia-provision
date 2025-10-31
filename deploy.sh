@@ -268,6 +268,11 @@ if [[ -n "$SGW_IPS" ]]; then
     POPULATE_CMD="$POPULATE_CMD --sgw-hosts \"$SGW_IPS\" --sgw-group-name $SGW_GROUP_NAME"
 fi
 
+# Pass SSH password if set via environment
+if [[ -n "$ANSIBLE_SSH_PASSWORD" ]]; then
+    POPULATE_CMD="$POPULATE_CMD --ssh-password \"$ANSIBLE_SSH_PASSWORD\""
+fi
+
 eval $POPULATE_CMD
 
 if [[ "$DRY_RUN" == true ]]; then

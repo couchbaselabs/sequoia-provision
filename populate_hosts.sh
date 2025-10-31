@@ -27,6 +27,7 @@ SGW_HOSTS=""
 SGW_HOSTS_FILE=""
 SGW_GROUP_NAME="sync_gateways"
 HOSTS_FILE="ansible/hosts"
+SSH_PASSWORD=""
 BACKUP_EXISTING=true
 
 # Colors for output
@@ -52,6 +53,7 @@ OPTIONS:
     --sgw-group-name NAME           Custom group name for SGW hosts (default: sync_gateways)
     
     --hosts-file PATH               Path to hosts file (default: ansible/hosts)
+    --ssh-password PASSWORD         SSH password for ansible (optional, from Jenkins param)
     --no-backup                     Don't backup existing hosts file
     
     -h, --help                      Show this help message
@@ -104,6 +106,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --hosts-file)
             HOSTS_FILE="$2"
+            shift 2
+            ;;
+        --ssh-password)
+            SSH_PASSWORD="$2"
             shift 2
             ;;
         --no-backup)
@@ -206,13 +212,19 @@ if [[ -n "$SGW_HOSTS" ]]; then
 fi
 
 # Add common variables
-cat >> "$HOSTS_FILE" << 'EOF'
+cat >> "$HOSTS_FILE" << EOF
 [all:vars]
 ansible_connection=ssh
 ansible_ssh_user=root
-# ansible_ssh_pass - Configure in ansible vault or pass via --ask-pass
-
 EOF
+
+# Add SSH password if provided
+if [[ -n "$SSH_PASSWORD" ]]; then
+    echo "ansible_ssh_pass=$SSH_PASSWORD" >> "$HOSTS_FILE"
+else
+    echo "# ansible_ssh_pass - Configure in ansible vault or pass via --ask-pass" >> "$HOSTS_FILE"
+fi
+echo "" >> "$HOSTS_FILE"
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
