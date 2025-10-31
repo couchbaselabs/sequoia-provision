@@ -132,11 +132,22 @@ echo -e "${BLUE}Querying QE Config Server...${NC}" >&2
 echo -e "  Server: ${CONFIG_URL}" >&2
 echo -e "  Pool ID: ${POOL_ID}" >&2
 echo -e "  Query Type: ${QUERY_TYPE}" >&2
+echo -e "  Query: ${QUERY}" >&2
 echo "" >&2
 
+# Execute with explicit error handling
+set +e
 RESPONSE=$(curl --silent --location --request POST "$CONFIG_URL" \
     --data-urlencode "statement=${QUERY}" \
     -u "${CONFIG_USER}:${CONFIG_PASS}")
+CURL_EXIT=$?
+set -e
+
+if [[ $CURL_EXIT -ne 0 ]]; then
+    echo -e "${RED}Error: curl command failed (exit code: $CURL_EXIT)${NC}" >&2
+    echo "Is the QE config server accessible?" >&2
+    exit 1
+fi
 
 # Check for errors in response
 if echo "$RESPONSE" | grep -q '"status": "errors"'; then
