@@ -20,6 +20,7 @@
   
   - name: disable thp
     shell: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
+    ignore_errors: True
   
   - name: remove core conf file if any
     shell: "rm -f /etc/security/limits.d/core.conf"
@@ -45,6 +46,7 @@
   
   - name: disable thp defrag
     shell: "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+    ignore_errors: True
   
   - name: cleanup old pkg dirs
     shell: "rm {{deb_path}} 2>/dev/null"
