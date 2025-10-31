@@ -271,6 +271,9 @@ fi
 # Pass SSH password if set via environment
 if [[ -n "$ANSIBLE_SSH_PASSWORD" ]]; then
     POPULATE_CMD="$POPULATE_CMD --ssh-password \"$ANSIBLE_SSH_PASSWORD\""
+    echo -e "${GREEN}✓ SSH password will be added to hosts file${NC}"
+else
+    echo -e "${YELLOW}⚠ No SSH password provided - ensure SSH keys are set up or add SSH_PASSWORD parameter${NC}"
 fi
 
 eval $POPULATE_CMD

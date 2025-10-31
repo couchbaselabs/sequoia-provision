@@ -221,8 +221,10 @@ EOF
 # Add SSH password if provided
 if [[ -n "$SSH_PASSWORD" ]]; then
     echo "ansible_ssh_pass=$SSH_PASSWORD" >> "$HOSTS_FILE"
+    echo -e "${GREEN}✓ Added ansible_ssh_pass to hosts file${NC}"
 else
     echo "# ansible_ssh_pass - Configure in ansible vault or pass via --ask-pass" >> "$HOSTS_FILE"
+    echo -e "${YELLOW}⚠ SSH password not provided - added comment only${NC}"
 fi
 echo "" >> "$HOSTS_FILE"
 
