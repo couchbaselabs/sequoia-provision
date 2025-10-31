@@ -1,0 +1,54 @@
+---
+# Uninstall Playbook
+# Usage: ansible-playbook -i ansible/hosts uninstall.yml -e "target_hosts=centos2"
+
+- hosts: "{{ target_hosts }}"
+  remote_user: root
+  tasks:
+  - name: rm locks
+    shell: "rm /var/lib/dpkg/lock"
+    ignore_errors: True
+  
+  - name: rm front end locks
+    shell: "rm /var/lib/dpkg/lock-frontend"
+    ignore_errors: True
+  
+  - name: configure
+    shell: "dpkg --configure -a"
+  
+  - name: stop couchbase
+    shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: stop memcached
+    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: stop epmd
+    shell: "ps aux | grep 'epmd' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: uninstall couchbase
+    apt: name=couchbase-server state=absent
+  
+  - name: rm opt dir
+    shell: "rm -rf /opt/couchbase"
+  
+  - name: rm data dir
+    shell: "rm -rf /data/*"
+  
+  - name: rm config profile
+    shell: "rm -rf /etc/couchbase.d/*"
+  
+  - name: stop couchbase
+    shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: stop memcached
+    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: stop epmd
+    shell: "ps aux | grep 'epmd' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+

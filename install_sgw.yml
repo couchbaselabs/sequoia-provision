@@ -1,0 +1,69 @@
+---
+# Sync Gateway Installation Playbook
+# Usage: ansible-playbook -i ansible/hosts install_sgw.yml -e "sgw_target_hosts=syncgateways" -e "SGW_VER=3.3.0" -e "SGW_BUILD_NO=271"
+
+- hosts: "{{ sgw_target_hosts | default('syncgateways') }}"
+  vars:
+    sgw_ver_no: "{{ SGW_VER | default('3.3.0') }}"
+    sgw_build_no: "{{ SGW_BUILD_NO | default('271') }}"
+    sgw_flavor: "{{ SGW_FLAVOR | default('enterprise') }}"
+    sgw_base_url: "http://172.23.126.166/builds/latestbuilds/sync_gateway/{{ sgw_ver_no }}/{{ sgw_build_no }}"
+    sgw_package: "couchbase-sync-gateway-{{ sgw_flavor }}_{{ sgw_ver_no }}-{{ sgw_build_no }}_x86_64.deb"
+    sgw_package_url: "{{ sgw_base_url }}/{{ sgw_package }}"
+    perform_uninstall: "{{ PERFORM_UNINSTALL | default(true) }}"
+    perform_install: "{{ PERFORM_INSTALL | default(true) }}"
+  remote_user: root
+  tasks:
+    # Uninstall Sync Gateway
+    - name: SYNC GATEWAY | Stop sync_gateway service
+      shell: "systemctl stop sync_gateway"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Kill sync_gateway processes
+      shell: "ps aux | grep 'sync_gateway' | awk '{print $2}' | xargs kill -s 9"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Uninstall sync_gateway
+      apt:
+        name: couchbase-sync-gateway-*
+        state: absent
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Remove sync_gateway configuration
+      file:
+        path: /opt/couchbase-sync-gateway
+        state: absent
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Remove temporary packages
+      shell: "rm -f /tmp/couchbase-sync-gateway-*.deb"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    # Install Sync Gateway
+    - name: SYNC GATEWAY | Download sync_gateway dpkg {{ sgw_package_url }}
+      get_url:
+        url: "{{ sgw_package_url }}"
+        dest: "/tmp/{{ sgw_package }}"
+        validate_certs: no
+      register: sgw_download
+      when: perform_install | default(true)
+
+    - name: SYNC GATEWAY | Install sync_gateway dpkg
+      shell: "dpkg -i /tmp/{{ sgw_package }}"
+      when: 
+        - perform_install | default(true)
+        - sgw_download is succeeded
+
+    - name: SYNC GATEWAY | Wait for sync_gateway to be available
+      wait_for:
+        port: 4984
+        delay: 5
+        timeout: 60
+      ignore_errors: true
+      when: perform_install | default(true)
+
