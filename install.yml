@@ -171,8 +171,8 @@
   - name: wait for install done
     wait_for: port=8091 delay=10
 
-# Install Sync Gateway (if sgw_target_hosts is defined)
-- hosts: "{{ sgw_target_hosts | default('syncgateways') }}"
+# Install Sync Gateway (if sgw_target_hosts is provided)
+- hosts: "{{ sgw_target_hosts | default('localhost') }}"
   vars:
     sgw_ver_no: "{{ SGW_VER | default('3.3.0') }}"
     sgw_build_no: "{{ SGW_BUILD_NO | default('271') }}"
@@ -183,7 +183,6 @@
     perform_uninstall: "{{ PERFORM_SGW_UNINSTALL | default(true) }}"
     perform_install: "{{ PERFORM_SGW_INSTALL | default(true) }}"
   remote_user: root
-  when: sgw_target_hosts is defined
   tasks:
     # Uninstall Sync Gateway
     - name: SYNC GATEWAY | Stop sync_gateway service

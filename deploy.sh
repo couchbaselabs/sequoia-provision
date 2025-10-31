@@ -294,6 +294,9 @@ if [[ -n "$SGW_IPS" ]]; then
     INSTALL_CMD="$INSTALL_CMD -e \"sgw_target_hosts=$SGW_GROUP_NAME\""
     INSTALL_CMD="$INSTALL_CMD -e \"SGW_VER=$SGW_VERSION\""
     INSTALL_CMD="$INSTALL_CMD -e \"SGW_BUILD_NO=$SGW_BUILD\""
+else
+    # Skip SGW play by targeting non-existent host
+    INSTALL_CMD="$INSTALL_CMD --limit '$CB_GROUP_NAME'"
 fi
 
 if [[ "$SKIP_UNINSTALL" == true ]]; then
