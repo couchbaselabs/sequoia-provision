@@ -122,20 +122,14 @@ pipeline {
             }
         }
 
-        stage('Prepare Provider File') {
-            agent { label "${env.VM_NAME}" }
-            steps {
-                sh """
-                    cp /root/sequoia-provision/provider.yaml /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml
-                """
-            }
-        }
-
         stage('Deploy and Run Tests') {
             agent { label "${env.VM_NAME}" }
             steps {
                 script {
+                    echo ">>> SKIP_INSTALL parameter value: ${params.SKIP_INSTALL}"
+                    
                     if (!params.SKIP_INSTALL) {
+                        echo ">>> Starting Couchbase deployment..."
                         dir('/root/sequoia-provision') {
                             sh """
                                 export CONFIG_PASSWORD='${params.CONFIG_PASSWORD}'
@@ -152,10 +146,18 @@ pipeline {
                                     --with-sgw ${params.WITH_SGW}
                             """
                         }
+                        echo ">>> Deployment completed successfully"
                     } else {
-                        echo "Skipping deploy/install step as SKIP_INSTALL is true"
+                        echo ">>> Skipping deploy/install step as SKIP_INSTALL is true"
                     }
 
+                    echo ">>> Preparing provider file..."
+                    sh """
+                        cp /root/sequoia-provision/provider.yaml /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml
+                    """
+                    echo ">>> Provider file ready"
+
+                    echo ">>> Starting sequoia tests..."
                     dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
                         sh """
                             ./sequoia \
