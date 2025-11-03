@@ -88,7 +88,7 @@ pipeline {
                                 git clone https://github.com/couchbaselabs/sequoia-provision.git .
                             fi
                             git fetch origin ${params.SEQ_PROVISION_BRANCH}
-                            git checkout ${params.SEQ_PROVISION_BRANCH}
+                            git checkout -b ${params.SEQ_PROVISION_BRANCH} FETCH_HEAD
                             git reset --hard origin/${params.SEQ_PROVISION_BRANCH}
                         """
                     }
@@ -99,7 +99,7 @@ pipeline {
                                 git clone https://github.com/couchbaselabs/sequoia.git .
                             fi
                             git fetch origin ${params.SEQ_REPO_BRANCH}
-                            git checkout ${params.SEQ_REPO_BRANCH}
+                            git checkout -b ${params.SEQ_REPO_BRANCH} FETCH_HEAD
                             git reset --hard origin/${params.SEQ_REPO_BRANCH}
                         """
 
