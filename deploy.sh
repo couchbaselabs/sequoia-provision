@@ -212,8 +212,6 @@ if [[ "$USE_QE_CONFIG" == true && -z "$CONFIG_PASS" ]]; then
     exit 1
 fi
 
-# Set Ansible config
-export ANSIBLE_CONFIG="$(pwd)/ansible/ansible.cfg"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}   Couchbase Deployment${NC}"
