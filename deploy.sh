@@ -58,7 +58,7 @@ Usage: $0 [OPTIONS]
 INPUT OPTIONS (Choose one):
   QE Config Server (Fetch IPs from pool):
     --cb-pool-id ID                 Pool ID (e.g., longevity_cluster_2)
-    --with-sgw                      Also deploy SGW (fetches hosts tagged with "sgw")
+    --with-sgw true|false           Also deploy SGW (fetches hosts tagged with "sgw", default: false)
     --config-server IP              QE Config server (default: 172.23.105.178)
     --config-port PORT              Query port (default: 8093)
     --config-user USERNAME          Username (default: Administrator)
@@ -79,7 +79,7 @@ VERSION OPTIONS:
     --cb-flavor FLAVOR              CB Server flavor (auto-detected from version, can override)
     --cb-install-url URL            Custom CB install URL (overrides version/build/flavor)
     
-    --with-sgw                      Also install Sync Gateway on hosts tagged with 'sgw'
+    --with-sgw true|false           Also install Sync Gateway on hosts tagged with 'sgw' (default: false)
     --sgw-version VERSION           SGW version (default: 3.3.0)
     --sgw-build BUILD               SGW build (default: 271)
     --sgw-install-url URL           Custom SGW install URL (overrides version/build)
@@ -98,10 +98,10 @@ EXAMPLES:
     CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2
     
     # CB + SGW (also deploys to hosts tagged with "sgw")
-    CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2 --with-sgw
+    CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2 --with-sgw true
     
     # With custom versions
-    CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2 --with-sgw \
+    CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2 --with-sgw true \
       --cb-version 7.6.8 --cb-build 7151
     
     # From Manual IPs
@@ -123,7 +123,7 @@ while [[ $# -gt 0 ]]; do
         --scope) SCOPE="$2"; shift 2 ;;
         --collection) COLLECTION="$2"; shift 2 ;;
         --cb-pool-id) CB_POOL_ID="$2"; shift 2 ;;
-        --with-sgw) WITH_SGW=true; shift ;;
+        --with-sgw) WITH_SGW="$2"; shift 2 ;;
         # Manual IP options
         --cb-hosts) CB_HOSTS="$2"; shift 2 ;;
         --cb-hosts-file) CB_HOSTS_FILE="$2"; shift 2 ;;
@@ -225,7 +225,7 @@ if [[ "$USE_QE_CONFIG" == true ]]; then
     echo "Input Method: QE Config Server"
     echo "Config Server: ${CONFIG_SERVER}:${CONFIG_PORT}"
     echo "CB Pool ID: ${CB_POOL_ID}"
-    if [[ "$WITH_SGW" == true ]]; then
+    if [[ "$WITH_SGW" == "true" ]]; then
         echo "SGW Mode: Enabled (will fetch hosts tagged with 'sgw')"
     fi
 else
@@ -298,7 +298,7 @@ CB_IPS=$(./fetch_hosts.sh \
 
     # Fetch SGW IPs from QE if specified
     SGW_IPS=""
-    if [[ "$WITH_SGW" == true ]]; then
+    if [[ "$WITH_SGW" == "true" ]]; then
         echo ""
         echo -e "${YELLOW}Step 2: Fetching Sync Gateway IPs (hosts tagged with 'sgw')...${NC}"
         echo ""
