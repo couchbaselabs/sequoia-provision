@@ -44,6 +44,16 @@
       ignore_errors: true
       when: perform_uninstall | default(true)
 
+    - name: SYNC GATEWAY | Clean up broken dpkg state
+      shell: "dpkg --purge --force-all couchbase-sync-gateway-enterprise couchbase-sync-gateway || true"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Remove dpkg info files
+      shell: "rm -f /var/lib/dpkg/info/couchbase-sync-gateway*"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
     # Install Sync Gateway
     - name: SYNC GATEWAY | Download sync_gateway dpkg {{ sgw_package_url }}
       get_url:
@@ -54,7 +64,7 @@
       when: perform_install | default(true)
 
     - name: SYNC GATEWAY | Install sync_gateway dpkg
-      shell: "dpkg -i /tmp/{{ sgw_package }}"
+      shell: "dpkg -i --force-overwrite --force-confnew /tmp/{{ sgw_package }}"
       when: 
         - perform_install | default(true)
         - sgw_download is succeeded
