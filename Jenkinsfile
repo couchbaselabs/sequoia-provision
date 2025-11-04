@@ -25,9 +25,6 @@ pipeline {
         string(name: 'SEQ_REPO_BRANCH', defaultValue: 'master', description: 'Branch to checkout for sequoia repo')
         string(name: 'SEQ_CHERRYPICK', defaultValue: '', description: 'Optional commit hash to cherry-pick in sequoia repo')
 
-        password(name: 'SSH_PASSWORD', defaultValue: '<Enter password>', description: 'SSH password for connecting to the server nodes')
-        password(name: 'CONFIG_PASSWORD', defaultValue: '<Enter QE server login password>', description: 'QE server login password')
-
         string(name: 'SGW_INSTALL_URL', defaultValue: '', description: 'Sync Gateway install URL')
         booleanParam(name: 'WITH_SGW', defaultValue: false, description: 'Include Sync Gateway')
         
@@ -128,27 +125,32 @@ pipeline {
                 script {
                     echo ">>> SKIP_INSTALL parameter value: ${params.SKIP_INSTALL}"
                     
-                    if (!params.SKIP_INSTALL) {
-                        echo ">>> Starting Couchbase deployment..."
-                        dir('/root/sequoia-provision') {
-                            sh """
-                                export CONFIG_PASSWORD='${params.CONFIG_PASSWORD}'
-                                export SSH_PASSWORD='${params.SSH_PASSWORD}'
-                                export ANSIBLE_SSH_PASSWORD="$SSH_PASSWORD"
-                                ./deploy.sh \
-                                    --cb-pool-id ${params.COMPONENT} \
-                                    --cb-version ${params.CB_VERSION} \
-                                    --cb-build ${params.CB_BUILD} \
-                                    --sgw-version ${params.SGW_VERSION} \
-                                    --sgw-build ${params.SGW_BUILD} \
-                                    --cb-install-url '${params.CB_INSTALL_URL}' \
-                                    --sgw-install-url '${params.SGW_INSTALL_URL}' \
-                                    --with-sgw ${params.WITH_SGW}
-                            """
+                    withCredentials([
+                        string(credentialsId: 'root', variable: 'SSH_PASSWORD'),
+                        string(credentialsId: 'qe_db_cluster', variable: 'CONFIG_PASSWORD')
+                    ]) {
+                        if (!params.SKIP_INSTALL) {
+                            echo ">>> Starting Couchbase deployment..."
+                            dir('/root/sequoia-provision') {
+                                sh """
+                                    export CONFIG_PASSWORD='${CONFIG_PASSWORD}'
+                                    export SSH_PASSWORD='${SSH_PASSWORD}'
+                                    export ANSIBLE_SSH_PASSWORD="$SSH_PASSWORD"
+                                    ./deploy.sh \
+                                        --cb-pool-id ${params.COMPONENT} \
+                                        --cb-version ${params.CB_VERSION} \
+                                        --cb-build ${params.CB_BUILD} \
+                                        --sgw-version ${params.SGW_VERSION} \
+                                        --sgw-build ${params.SGW_BUILD} \
+                                        --cb-install-url '${params.CB_INSTALL_URL}' \
+                                        --sgw-install-url '${params.SGW_INSTALL_URL}' \
+                                        --with-sgw ${params.WITH_SGW}
+                                """
+                            }
+                            echo ">>> Deployment completed successfully"
+                        } else {
+                            echo ">>> Skipping deploy/install step as SKIP_INSTALL is true"
                         }
-                        echo ">>> Deployment completed successfully"
-                    } else {
-                        echo ">>> Skipping deploy/install step as SKIP_INSTALL is true"
                     }
 
                     echo ">>> Preparing provider file..."
