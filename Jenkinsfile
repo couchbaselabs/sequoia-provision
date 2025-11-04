@@ -113,6 +113,9 @@ pipeline {
                             export GO111MODULE=on
                             cd /opt/godev/src/github.com/couchbaselabs/sequoia
                             go version
+                            if [ ! -f go.mod ]; then
+                                go mod init github.com/couchbaselabs/sequoia
+                            fi
                             go mod tidy
                             go build -o sequoia
                         '''
