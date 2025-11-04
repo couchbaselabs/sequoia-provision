@@ -126,8 +126,8 @@ pipeline {
                     echo ">>> SKIP_INSTALL parameter value: ${params.SKIP_INSTALL}"
                     
                     withCredentials([
-                        string(credentialsId: 'root', variable: 'SSH_PASSWORD'),
-                        string(credentialsId: 'qe_db_cluster', variable: 'CONFIG_PASSWORD')
+                        usernamePassword(credentialsId: 'root', usernameVariable: 'SSH_USERNAME', passwordVariable: 'SSH_PASSWORD'),
+                        usernamePassword(credentialsId: 'qe_db_cluster', usernameVariable: 'CONFIG_USERNAME', passwordVariable: 'CONFIG_PASSWORD')
                     ]) {
                         if (!params.SKIP_INSTALL) {
                             echo ">>> Starting Couchbase deployment..."
