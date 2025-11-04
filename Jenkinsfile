@@ -113,10 +113,14 @@ pipeline {
                             export GO111MODULE=on
                             cd /opt/godev/src/github.com/couchbaselabs/sequoia
                             go version
+
+                            # Verify go.mod exists (should be in repository)
                             if [ ! -f go.mod ]; then
-                                go mod init github.com/couchbaselabs/sequoia
+                                echo "ERROR: go.mod not found in repository. Please ensure the branch has go.mod checked in."
+                                exit 1
                             fi
-                            go mod tidy
+
+                            go mod download
                             go build -o sequoia
                         '''
                     }
