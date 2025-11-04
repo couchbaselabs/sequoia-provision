@@ -110,8 +110,10 @@ pipeline {
                             export GOPATH=/opt/godev
                             export PATH=$PATH:/usr/local/go/bin
                             export PROJECT=couchbaselabs
+                            export GO111MODULE=on
                             cd /opt/godev/src/github.com/couchbaselabs/sequoia
                             go version
+                            go mod tidy
                             go build -o sequoia
                         '''
                     }
