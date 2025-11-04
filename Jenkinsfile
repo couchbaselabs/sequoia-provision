@@ -113,14 +113,22 @@ pipeline {
                             export GO111MODULE=on
                             cd /opt/godev/src/github.com/couchbaselabs/sequoia
                             go version
-
+                            
                             # Verify go.mod exists (should be in repository)
                             if [ ! -f go.mod ]; then
                                 echo "ERROR: go.mod not found in repository. Please ensure the branch has go.mod checked in."
                                 exit 1
                             fi
-
-                            go mod download
+                            
+                            # Fix the docker module path issue by using an older compatible version
+                            # Remove the problematic replace directive and use compatible versions
+                            sed -i '/replace github.com\\/docker\\/docker\\/api/d' go.mod
+                            
+                            # Downgrade to compatible versions that work with Go 1.21
+                            go get github.com/fsouza/go-dockerclient@v1.9.0
+                            go get github.com/docker/docker@v20.10.24+incompatible
+                            
+                            go mod tidy
                             go build -o sequoia
                         '''
                     }
