@@ -2,7 +2,6 @@
 ansible/hosts
 ansible/hosts.example
 ansible/hosts.backup.*
-*.retry
 
 # Provider IP list
 provider.yaml
@@ -10,28 +9,7 @@ provider.yaml
 # Logs
 *.log
 
-# Temp files
-*.tmp
-*.bak
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.Python
-venv/
 
-# Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
 
-# OS
-.DS_Store
-Thumbs.db
 
-# Local test files
-test_*.txt
-temp_*.txt
