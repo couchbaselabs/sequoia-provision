@@ -58,7 +58,7 @@ pipeline {
                         component6: [vm: 'component-systest-client-6', ip: '172.23.216.126'],
                         component7: [vm: 'component-systest-client-7', ip: '172.23.216.125'],
                         longevity_cluster_1: [vm: 'longevity-systest-client-1', ip: '172.23.105.35'],
-                        longevity_cluster_2: [vm: 'longevity-systest-client-2', ip: '172.23.97.180']
+                        longevity_cluster_2: [vm: 'longevity-systest-client-2', ip: '172.23.104.168']
                     ]
 
                     env.VM_NAME = config[params.COMPONENT]?.vm
