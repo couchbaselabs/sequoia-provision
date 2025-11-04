@@ -118,13 +118,13 @@ fi
 # Build the N1QL query
 if [[ "$QUERY_TYPE" == "master" ]]; then
     # Query for master node: pool_id AND master_node=true
-    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND master_node=true"
+    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND master_node=true AND state=\"available\""
 elif [[ "$QUERY_TYPE" == "sgw" ]]; then
     # Query for Sync Gateway hosts: pool_id AND "sgw" tag
-    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" IN poolId"
+    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" IN poolId AND state=\"available\""
 else
     # Query for Couchbase Server hosts: pool_id but NOT "sgw" tag
-    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" NOT IN poolId"
+    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" NOT IN poolId AND state=\"available\""
 fi
 
 # Build config server URL

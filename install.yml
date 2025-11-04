@@ -174,7 +174,8 @@
     wait_for: port=8091 delay=10
 
 # Install Sync Gateway (if sgw_target_hosts is provided)
-- hosts: "{{ sgw_target_hosts | default('localhost') }}"
+- hosts: "{{ sgw_target_hosts | default('none') }}"
+  gather_facts: no
   vars:
     sgw_ver_no: "{{ SGW_VER | default('3.3.0') }}"
     sgw_build_no: "{{ SGW_BUILD_NO | default('271') }}"
@@ -235,8 +236,18 @@
     - name: SYNC GATEWAY | Wait for sync_gateway to be available
       wait_for:
         port: 4984
+        host: "{{ ansible_host | default(inventory_hostname) }}"
         delay: 5
         timeout: 60
+        state: started
+      register: sgw_port_check
       ignore_errors: true
       when: perform_install | default(true)
+
+    - name: SYNC GATEWAY | Verify installation success
+      debug:
+        msg: "Sync Gateway installed and running on port 4984"
+      when: 
+        - perform_install | default(true)
+        - sgw_port_check is succeeded
 
