@@ -71,6 +71,8 @@ pipeline {
                     echo ">>> Selected component: ${params.COMPONENT}"
                     echo ">>> Target VM: ${env.VM_NAME}"
                     echo ">>> Slave IP: ${env.SLAVE_IP}"
+                    currentBuild.description = "Component: ${params.COMPONENT} | VM: ${env.VM_NAME} | IP: ${env.SLAVE_IP}"
+
                 }
             }
         }
