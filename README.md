@@ -198,7 +198,7 @@ Default configuration for querying the pool management system:
 
 | Setting | Default Value | Override |
 |---------|--------------|----------|
-| Server | 172.23.105.178 | `--config-server` |
+| Server | 172.23.217.21 | `--config-server` |
 | Port | 8093 | `--config-port` |
 | Username | Administrator | `--config-user` |
 | Password | *(required)* | `--config-pass` or `CONFIG_PASSWORD` env var |
@@ -445,7 +445,7 @@ sequoia-provision/
 CONFIG_PASSWORD="pass" ./fetch_hosts.sh --pool-id longevity_cluster_2
 
 # Check if pool ID is correct
-# Verify config server is accessible: curl http://172.23.105.178:8093
+# Verify config server is accessible: curl http://172.23.217.21:8093
 ```
 
 **Manual IPs:**

@@ -10,7 +10,7 @@ set -e
 
 # Default values
 # QE Config Server options
-CONFIG_SERVER="172.23.105.178"
+CONFIG_SERVER="172.23.217.21"
 CONFIG_PORT="8093"
 CONFIG_USER="Administrator"
 CONFIG_PASS="${CONFIG_PASSWORD:-}"
@@ -59,7 +59,7 @@ INPUT OPTIONS (Choose one):
   QE Config Server (Fetch IPs from pool):
     --cb-pool-id ID                 Pool ID (e.g., longevity_cluster_2)
     --with-sgw true|false           Also deploy SGW (fetches hosts tagged with "sgw", default: false)
-    --config-server IP              QE Config server (default: 172.23.105.178)
+    --config-server IP              QE Config server (default: 172.23.217.21)
     --config-port PORT              Query port (default: 8093)
     --config-user USERNAME          Username (default: Administrator)
     --config-pass PASSWORD          Password (or set CONFIG_PASSWORD env var)

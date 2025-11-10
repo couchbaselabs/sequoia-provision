@@ -9,7 +9,7 @@
 set -e
 
 # Default values
-CONFIG_SERVER="172.23.105.178"
+CONFIG_SERVER="172.23.217.21"
 CONFIG_PORT="8093"
 CONFIG_USER="Administrator"
 CONFIG_PASS="${CONFIG_PASSWORD:-}"  # Read from environment or command line
@@ -36,7 +36,7 @@ Fetch Host IPs from QE Config Server
 Usage: $0 [OPTIONS]
 
 CONFIG SERVER OPTIONS:
-    --config-server IP              QE Config server IP (default: 172.23.105.178)
+    --config-server IP              QE Config server IP (default: 172.23.217.21)
     --config-port PORT              Query service port (default: 8093)
     --config-user USERNAME          Admin username (default: Administrator)
     --config-pass PASSWORD          Admin password (REQUIRED, or set CONFIG_PASSWORD env var)
