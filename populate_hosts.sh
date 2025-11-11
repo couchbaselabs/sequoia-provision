@@ -1,0 +1,266 @@
+#!/bin/bash
+#
+# Populate Ansible Hosts File Dynamically
+# Usage: ./populate_hosts.sh [options]
+#
+# Examples:
+#   # Populate CB hosts from command line
+#   ./populate_hosts.sh --cb-hosts "172.23.105.1 172.23.105.2 172.23.105.3"
+#
+#   # Populate CB hosts from file
+#   ./populate_hosts.sh --cb-hosts-file /tmp/cb_ips.txt
+#
+#   # Populate CB hosts + SGW hosts
+#   ./populate_hosts.sh --cb-hosts "172.23.105.1 172.23.105.2" --sgw-hosts "172.23.105.10"
+#
+#   # Specify custom group names
+#   ./populate_hosts.sh --cb-hosts "172.23.105.1" --cb-group-name myservers
+#
+
+set -e
+
+# Default values
+CB_HOSTS=""
+CB_HOSTS_FILE=""
+CB_GROUP_NAME="couchbase_servers"
+SGW_HOSTS=""
+SGW_HOSTS_FILE=""
+SGW_GROUP_NAME="sync_gateways"
+HOSTS_FILE="ansible/hosts"
+SSH_PASSWORD=""
+BACKUP_EXISTING=true
+
+# Colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Help function
+show_help() {
+    cat << EOF
+Populate Ansible Hosts File Dynamically
+
+Usage: $0 [OPTIONS]
+
+OPTIONS:
+    --cb-hosts "IP1 IP2 IP3"        Space-separated list of Couchbase Server IPs
+    --cb-hosts-file FILE            File containing CB IPs (one per line)
+    --cb-group-name NAME            Custom group name for CB hosts (default: couchbase_servers)
+    
+    --sgw-hosts "IP1 IP2"           Space-separated list of Sync Gateway IPs
+    --sgw-hosts-file FILE           File containing SGW IPs (one per line)
+    --sgw-group-name NAME           Custom group name for SGW hosts (default: sync_gateways)
+    
+    --hosts-file PATH               Path to hosts file (default: ansible/hosts)
+    --ssh-password PASSWORD         SSH password for ansible (optional, from Jenkins param)
+    --no-backup                     Don't backup existing hosts file
+    
+    -h, --help                      Show this help message
+
+EXAMPLES:
+    # Simple CB cluster
+    $0 --cb-hosts "172.23.105.1 172.23.105.2 172.23.105.3"
+    
+    # CB cluster + Sync Gateway
+    $0 --cb-hosts "172.23.105.1 172.23.105.2" \\
+       --sgw-hosts "172.23.105.10"
+    
+    # Load IPs from files
+    $0 --cb-hosts-file /tmp/cb_ips.txt \\
+       --sgw-hosts-file /tmp/sgw_ips.txt
+    
+    # Custom group names
+    $0 --cb-hosts "172.23.105.1" --cb-group-name centos2
+
+EOF
+    exit 0
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --cb-hosts)
+            CB_HOSTS="$2"
+            shift 2
+            ;;
+        --cb-hosts-file)
+            CB_HOSTS_FILE="$2"
+            shift 2
+            ;;
+        --cb-group-name)
+            CB_GROUP_NAME="$2"
+            shift 2
+            ;;
+        --sgw-hosts)
+            SGW_HOSTS="$2"
+            shift 2
+            ;;
+        --sgw-hosts-file)
+            SGW_HOSTS_FILE="$2"
+            shift 2
+            ;;
+        --sgw-group-name)
+            SGW_GROUP_NAME="$2"
+            shift 2
+            ;;
+        --hosts-file)
+            HOSTS_FILE="$2"
+            shift 2
+            ;;
+        --ssh-password)
+            SSH_PASSWORD="$2"
+            shift 2
+            ;;
+        --no-backup)
+            BACKUP_EXISTING=false
+            shift
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown option: $1${NC}"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate input
+if [[ -z "$CB_HOSTS" && -z "$CB_HOSTS_FILE" ]]; then
+    echo -e "${RED}Error: Must specify either --cb-hosts or --cb-hosts-file${NC}"
+    echo "Use --help for usage information"
+    exit 1
+fi
+
+# Function to read IPs from file
+read_ips_from_file() {
+    local file=$1
+    if [[ ! -f "$file" ]]; then
+        echo -e "${RED}Error: File not found: $file${NC}"
+        exit 1
+    fi
+    # Read file, skip empty lines and comments
+    grep -v '^#' "$file" | grep -v '^[[:space:]]*$' | tr '\n' ' '
+}
+
+# Get CB IPs
+if [[ -n "$CB_HOSTS_FILE" ]]; then
+    CB_HOSTS=$(read_ips_from_file "$CB_HOSTS_FILE")
+fi
+
+# Get SGW IPs
+if [[ -n "$SGW_HOSTS_FILE" ]]; then
+    SGW_HOSTS=$(read_ips_from_file "$SGW_HOSTS_FILE")
+fi
+
+# Validate IPs
+validate_ip() {
+    local ip=$1
+    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        return 0
+    else
+        echo -e "${RED}Error: Invalid IP address: $ip${NC}"
+        return 1
+    fi
+}
+
+# Backup existing hosts file
+if [[ -f "$HOSTS_FILE" ]] && [[ "$BACKUP_EXISTING" == true ]]; then
+    BACKUP_FILE="${HOSTS_FILE}.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$HOSTS_FILE" "$BACKUP_FILE"
+    echo -e "${YELLOW}Backed up existing hosts file to: $BACKUP_FILE${NC}"
+fi
+
+# Create directory if it doesn't exist
+mkdir -p "$(dirname "$HOSTS_FILE")"
+
+# Generate hosts file
+echo -e "${GREEN}Generating hosts file: $HOSTS_FILE${NC}"
+echo ""
+
+cat > "$HOSTS_FILE" << 'EOF'
+# Ansible Hosts File
+# Auto-generated by populate_hosts.sh
+# DO NOT EDIT MANUALLY - This file is dynamically generated
+
+EOF
+
+# Add Couchbase Server hosts
+if [[ -n "$CB_HOSTS" ]]; then
+    echo "[$CB_GROUP_NAME]" >> "$HOSTS_FILE"
+    for ip in $CB_HOSTS; do
+        if validate_ip "$ip"; then
+            echo "$ip" >> "$HOSTS_FILE"
+            echo -e "  ${GREEN}✓${NC} Added CB host: $ip"
+        fi
+    done
+    echo "" >> "$HOSTS_FILE"
+fi
+
+# Add Sync Gateway hosts
+if [[ -n "$SGW_HOSTS" ]]; then
+    echo "[$SGW_GROUP_NAME]" >> "$HOSTS_FILE"
+    for ip in $SGW_HOSTS; do
+        if validate_ip "$ip"; then
+            echo "$ip" >> "$HOSTS_FILE"
+            echo -e "  ${GREEN}✓${NC} Added SGW host: $ip"
+        fi
+    done
+    echo "" >> "$HOSTS_FILE"
+fi
+
+# Add common variables
+cat >> "$HOSTS_FILE" << EOF
+[all:vars]
+ansible_connection=ssh
+ansible_ssh_user=root
+EOF
+
+# Add SSH password if provided
+if [[ -n "$SSH_PASSWORD" ]]; then
+    echo "ansible_ssh_pass=$SSH_PASSWORD" >> "$HOSTS_FILE"
+    echo -e "${GREEN}✓ Added ansible_ssh_pass to hosts file${NC}"
+else
+    echo "# ansible_ssh_pass - Configure in ansible vault or pass via --ask-pass" >> "$HOSTS_FILE"
+    echo -e "${YELLOW}⚠ SSH password not provided - added comment only${NC}"
+fi
+echo "" >> "$HOSTS_FILE"
+
+echo ""
+echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}Hosts file generated successfully!${NC}"
+echo -e "${GREEN}========================================${NC}"
+echo ""
+echo "Summary:"
+if [[ -n "$CB_HOSTS" ]]; then
+    CB_COUNT=$(echo "$CB_HOSTS" | wc -w | tr -d ' ')
+    echo -e "  CB Hosts (${CB_GROUP_NAME}): ${GREEN}${CB_COUNT}${NC} hosts"
+fi
+if [[ -n "$SGW_HOSTS" ]]; then
+    SGW_COUNT=$(echo "$SGW_HOSTS" | wc -w | tr -d ' ')
+    echo -e "  SGW Hosts (${SGW_GROUP_NAME}): ${GREEN}${SGW_COUNT}${NC} hosts"
+fi
+echo ""
+echo "Next steps:"
+echo ""
+echo "  # View the generated hosts file:"
+echo "  cat $HOSTS_FILE"
+echo ""
+echo "  # Install Couchbase Server:"
+echo "  ansible-playbook -i $HOSTS_FILE install.yml \\"
+echo "    -e \"target_hosts=$CB_GROUP_NAME\" \\"
+echo "    -e \"FLAVOR=trinity\" \\"
+echo "    -e \"VER=7.6.8\" \\"
+echo "    -e \"BUILD_NO=7151\""
+echo ""
+if [[ -n "$SGW_HOSTS" ]]; then
+    echo "  # Install Sync Gateway:"
+    echo "  ansible-playbook -i $HOSTS_FILE install_sgw.yml \\"
+    echo "    -e \"sgw_target_hosts=$SGW_GROUP_NAME\" \\"
+    echo "    -e \"SGW_VER=3.3.0\" \\"
+    echo "    -e \"SGW_BUILD_NO=271\""
+    echo ""
+fi
+

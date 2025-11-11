@@ -1,8 +1,0 @@
----
-- hosts: centosclient2
-  remote_user: root
-  tasks:
-  - name: firewall off 
-    shell: "/sbin/iptables -F && /sbin/iptables -F -t nat"
-  - service: name=docker state=stopped
-  - service: name=docker state=started

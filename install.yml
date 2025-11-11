@@ -1,0 +1,263 @@
+---
+# Install Playbook
+# Usage: ansible-playbook -i ansible/hosts install.yml -e "target_hosts=centos2" -e "FLAVOR=trinity" -e "VER=7.6.8" -e "BUILD_NO=7151"
+# With SGW: ansible-playbook -i ansible/hosts install.yml -e "target_hosts=centos2" -e "FLAVOR=trinity" -e "VER=7.6.8" -e "BUILD_NO=7151" -e "sgw_target_hosts=syncgateways" -e "SGW_VER=3.3.0" -e "SGW_BUILD_NO=271"
+
+- hosts: "{{ target_hosts }}" 
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    build_no:  "{{BUILD_NO|default(2601)}}"
+    flavor:  "{{FLAVOR|default('watson')}}"
+    base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
+    url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
+    build_url: "{{URL|default(url_var)}}"
+    deb_path: "/tmp/couchbase.deb"
+  remote_user: root
+  tasks:
+  - name: set vm.swappiness to 0
+    shell: "echo 0 > /proc/sys/vm/swappiness"
+  
+  - name: disable thp
+    shell: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
+    ignore_errors: True
+  
+  - name: remove core conf file if any
+    shell: "rm -f /etc/security/limits.d/core.conf"
+    ignore_errors: True
+  
+  - name: create core conf file
+    shell: "touch /etc/security/limits.d/core.conf"
+  
+  - name: append hard core limit
+    shell: "echo 'couchbase       hard        core        unlimited' >> /etc/security/limits.d/core.conf"
+  
+  - name: append soft core limit
+    shell: "echo 'couchbase       soft        core        unlimited' >> /etc/security/limits.d/core.conf"
+  
+  - name: set default limit core to infinity step 1
+    shell: "echo '[Manager]' > /etc/systemd/system.conf"
+  
+  - name: set default limit core to infinity step 2
+    shell: "echo 'DefaultLimitCORE=infinity' >> /etc/systemd/system.conf"
+  
+  - name: reload systemctl daemon
+    shell: "systemctl daemon-reexec"
+  
+  - name: disable thp defrag
+    shell: "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
+    ignore_errors: True
+  
+  - name: cleanup old pkg dirs
+    shell: "rm {{deb_path}} 2>/dev/null"
+    ignore_errors: True
+  
+  - name: rm locks
+    shell: "rm /var/lib/dpkg/lock"
+    ignore_errors: True
+  
+  - name: rm front end locks
+    shell: "rm /var/lib/dpkg/lock-frontend"
+    ignore_errors: True
+  
+  - name: configure
+    shell: "dpkg --configure -a"
+  
+  - name: stop couchbase
+    shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: stop memcached
+    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+  
+  - name: uninstall couchbase
+    apt: name=couchbase-server state=absent
+  
+  - name: rm opt dir
+    shell: "rm -rf /opt/couchbase"
+  
+  - name: rm data dir
+    shell: "rm -rf /data/*"
+  
+  - name: rm index dir
+    shell: "rm -rf /index/*"
+  
+  - name: remove all hidden files
+    shell: "rm -rf /data/.*"
+    ignore_errors: True
+  
+  - name: create couchbase directory
+    file:
+      path: /data/couchbase
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  
+  - name: create backup archive location
+    file:
+      path: /data/archive
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  
+  - name: create backup s3 location
+    file:
+      path: /data/s3
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  
+  - name: create backup gcp location
+    file:
+      path: /data/gcp
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  
+  - name: create backup azure location
+    file:
+      path: /data/azure
+      state: directory
+      owner: couchbase
+      group: couchbase
+      mode: 777
+  
+  - name: set /data to be owned by couchbase
+    shell: "chown -R couchbase:couchbase /data"
+  
+  - name: chmod /data to 777
+    shell: "chmod -R 777 /data"
+  
+  - name: stop memcached
+    shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
+    ignore_errors: True
+    
+- hosts: "{{ target_hosts }}"
+  serial: 1
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    build_no:  "{{BUILD_NO|default(2601)}}"
+    flavor:  "{{FLAVOR|default('watson')}}"
+    base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
+    url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
+    build_url: "{{URL|default(url_var)}}"
+    deb_path: "/tmp/couchbase.deb"
+  remote_user: root
+  tasks:
+  - debug: msg="Download {{build_url}}"
+  
+  - name: download binary
+    get_url: url="{{build_url}}" dest="{{deb_path}}"
+ 
+- hosts: "{{ target_hosts }}" 
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    build_no:  "{{BUILD_NO|default(2601)}}"
+    flavor:  "{{FLAVOR|default('watson')}}"
+    base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
+    url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
+    build_url: "{{URL|default(url_var)}}"
+    deb_path: "/tmp/couchbase.deb"
+  remote_user: root
+  tasks:
+  - name: install couchbase
+    apt: deb="{{deb_path}}"
+  
+  - name: wait for install done
+    wait_for: port=8091 delay=10
+
+# Install Sync Gateway (if sgw_target_hosts is provided)
+- hosts: "{{ sgw_target_hosts | default('none') }}"
+  gather_facts: no
+  vars:
+    sgw_ver_no: "{{ SGW_VER | default('3.3.0') }}"
+    sgw_build_no: "{{ SGW_BUILD_NO | default('271') }}"
+    sgw_flavor: "{{ SGW_FLAVOR | default('enterprise') }}"
+    sgw_base_url: "http://172.23.126.166/builds/latestbuilds/sync_gateway/{{ sgw_ver_no }}/{{ sgw_build_no }}"
+    sgw_package: "couchbase-sync-gateway-{{ sgw_flavor }}_{{ sgw_ver_no }}-{{ sgw_build_no }}_x86_64.deb"
+    sgw_url_var: "{{ sgw_base_url }}/{{ sgw_package }}"
+    sgw_package_url: "{{ SGW_URL | default(sgw_url_var) }}"
+    perform_uninstall: "{{ PERFORM_SGW_UNINSTALL | default(true) }}"
+    perform_install: "{{ PERFORM_SGW_INSTALL | default(true) }}"
+  remote_user: root
+  tasks:
+    # Uninstall Sync Gateway
+    - name: SYNC GATEWAY | Stop sync_gateway service
+      shell: "systemctl stop sync_gateway"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Kill sync_gateway processes
+      shell: "ps aux | grep 'sync_gateway' | awk '{print $2}' | xargs kill -s 9"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Uninstall sync_gateway
+      apt:
+        name: couchbase-sync-gateway-*
+        state: absent
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Remove sync_gateway configuration
+      file:
+        path: /opt/couchbase-sync-gateway
+        state: absent
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Remove temporary packages
+      shell: "rm -f /tmp/couchbase-sync-gateway-*.deb"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Clean up broken dpkg state
+      shell: "dpkg --purge --force-all couchbase-sync-gateway-enterprise couchbase-sync-gateway || true"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    - name: SYNC GATEWAY | Remove dpkg info files
+      shell: "rm -f /var/lib/dpkg/info/couchbase-sync-gateway*"
+      ignore_errors: true
+      when: perform_uninstall | default(true)
+
+    # Install Sync Gateway
+    - name: SYNC GATEWAY | Download sync_gateway dpkg {{ sgw_package_url }}
+      get_url:
+        url: "{{ sgw_package_url }}"
+        dest: "/tmp/{{ sgw_package }}"
+        validate_certs: no
+      register: sgw_download
+      when: perform_install | default(true)
+
+    - name: SYNC GATEWAY | Install sync_gateway dpkg
+      shell: "dpkg -i --force-overwrite --force-confnew /tmp/{{ sgw_package }}"
+      when: 
+        - perform_install | default(true)
+        - sgw_download is succeeded
+
+    - name: SYNC GATEWAY | Wait for sync_gateway to be available
+      wait_for:
+        port: 4984
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        delay: 5
+        timeout: 60
+        state: started
+      register: sgw_port_check
+      ignore_errors: true
+      when: perform_install | default(true)
+
+    - name: SYNC GATEWAY | Verify installation success
+      debug:
+        msg: "Sync Gateway installed and running on port 4984"
+      when: 
+        - perform_install | default(true)
+        - sgw_port_check is succeeded
+

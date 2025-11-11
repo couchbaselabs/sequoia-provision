@@ -1,0 +1,6 @@
+# Couchbase Server IPs
+# One IP per line, comments allowed with #
+
+172.23.105.1
+172.23.105.2
+172.23.105.3
