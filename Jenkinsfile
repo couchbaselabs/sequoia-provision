@@ -102,8 +102,7 @@ pipeline {
 
                         if (params.SEQ_CHERRYPICK?.trim()) {
                             sh """
-                                git fetch origin
-                                git cherry-pick ${params.SEQ_CHERRYPICK} || echo "Cherry-pick failed or conflicts found"
+                                ${params.SEQ_CHERRYPICK} || echo "Cherry-pick failed or conflicts found"
                             """
                         }
 
