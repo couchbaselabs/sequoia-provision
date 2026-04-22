@@ -86,6 +86,8 @@ pipeline {
                             if [ ! -d .git ]; then
                                 git clone https://github.com/couchbaselabs/sequoia-provision.git .
                             fi
+                            git cherry-pick --abort || true
+                            git reset --hard HEAD
                             git fetch origin
                             git checkout -B ${params.SEQ_PROVISION_BRANCH} origin/${params.SEQ_PROVISION_BRANCH}
                         """
@@ -96,6 +98,8 @@ pipeline {
                             if [ ! -d .git ]; then
                                 git clone https://github.com/couchbaselabs/sequoia.git .
                             fi
+                            git cherry-pick --abort || true
+                            git reset --hard HEAD
                             git fetch origin
                             git checkout -B ${params.SEQ_REPO_BRANCH} origin/${params.SEQ_REPO_BRANCH}
                         """
