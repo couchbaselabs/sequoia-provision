@@ -72,6 +72,7 @@ pipeline {
                     echo ">>> Target VM: ${env.VM_NAME}"
                     echo ">>> Slave IP: ${env.SLAVE_IP}"
                     currentBuild.description = "Build: ${params.CB_VERSION} - ${params.CB_BUILD} | Component: ${params.COMPONENT} | VM: ${env.VM_NAME} | IP: ${env.SLAVE_IP}"
+
                 }
             }
         }
