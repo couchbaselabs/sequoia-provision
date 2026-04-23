@@ -4,11 +4,10 @@ pipeline {
     parameters {
         choice(name: 'COMPONENT',
                choices: [
-                   'component1',
-                   'component2',
                    'component3',
                    'component6',
                    'component7',
+                   'mid_scale_component1',
                    'longevity_cluster_1',
                    'longevity_cluster_2'
                ],
@@ -52,11 +51,10 @@ pipeline {
             steps {
                 script {
                     def config = [
-                        component1: [vm: 'component-systest-client-1', ip: '172.23.106.226'],
-                        component2: [vm: 'component-systest-client-2', ip: '172.23.104.168'],
                         component3: [vm: 'component-systest-client-3', ip: '172.23.216.124'],
                         component6: [vm: 'component-systest-client-6', ip: '172.23.216.126'],
                         component7: [vm: 'component-systest-client-7', ip: '172.23.216.125'],
+                        mid_scale_component1: [vm: 'mid_scale_component-client-1', ip: '172.23.106.226'],
                         longevity_cluster_1: [vm: 'longevity-systest-client-1', ip: '172.23.105.35'],
                         longevity_cluster_2: [vm: 'longevity-systest-client-2', ip: '172.23.216.117']
                     ]
