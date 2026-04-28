@@ -26,8 +26,9 @@ pipeline {
 
         string(name: 'SGW_INSTALL_URL', defaultValue: '', description: 'Sync Gateway install URL')
         booleanParam(name: 'WITH_SGW', defaultValue: false, description: 'Include Sync Gateway')
-        
-        
+        booleanParam(name: 'NFS_TEST', defaultValue: false, description: 'Fetch NFS server from pool (poolId=nfs_server)')
+
+
         string(name: 'SCALE', defaultValue: '1', description: 'Scale parameter for sequoia')
         string(name: 'REPEAT', defaultValue: '1', description: 'Repeat parameter for sequoia')
         string(name: 'DURATION', defaultValue: '604800', description: 'Test duration in seconds')
@@ -116,17 +117,17 @@ pipeline {
                             export GO111MODULE=on
                             cd /opt/godev/src/github.com/couchbaselabs/sequoia
                             go version
-                            
+
                             # Verify go.mod exists (should be in repository)
                             if [ ! -f go.mod ]; then
                                 echo "ERROR: go.mod not found in repository. Please ensure the branch has go.mod checked in."
                                 exit 1
                             fi
-                            
+
                             # Downgrade to compatible versions that work with Go 1.21
                             go get github.com/fsouza/go-dockerclient@v1.9.0
                             go get github.com/docker/docker@v20.10.24+incompatible
-                            
+
                             go mod tidy
                             go build -o sequoia
                         '''
@@ -140,7 +141,7 @@ pipeline {
             steps {
                 script {
                     echo ">>> SKIP_INSTALL parameter value: ${params.SKIP_INSTALL}"
-                    
+
                     withCredentials([
                         usernamePassword(credentialsId: 'root', usernameVariable: 'SSH_USERNAME', passwordVariable: 'SSH_PASSWORD'),
                         usernamePassword(credentialsId: 'qe_db_cluster', usernameVariable: 'CONFIG_USERNAME', passwordVariable: 'CONFIG_PASSWORD')
@@ -160,7 +161,8 @@ pipeline {
                                         --sgw-build ${params.SGW_BUILD} \
                                         --cb-install-url '${params.CB_INSTALL_URL}' \
                                         --sgw-install-url '${params.SGW_INSTALL_URL}' \
-                                        --with-sgw ${params.WITH_SGW}
+                                        --with-sgw ${params.WITH_SGW} \
+                                        --nfs-test ${params.NFS_TEST}
                                 """
                             }
                             echo ">>> Deployment completed successfully"

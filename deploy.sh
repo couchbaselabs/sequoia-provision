@@ -19,12 +19,14 @@ SCOPE="_default"
 COLLECTION="system_longevity_machines"
 CB_POOL_ID=""
 WITH_SGW=false
+NFS_TEST=false
 
 # Manual IP options
 CB_HOSTS=""
 CB_HOSTS_FILE=""
 SGW_HOSTS=""
 SGW_HOSTS_FILE=""
+NFS_HOST=""
 
 # Common options
 CB_VERSION="7.6.8"
@@ -66,19 +68,21 @@ INPUT OPTIONS (Choose one):
     --bucket NAME                   Bucket (default: QE-server-pool)
     --scope NAME                    Scope (default: _default)
     --collection NAME               Collection (default: system_longevity_machines)
-  
+    --nfs-test true|false           Fetch NFS server from pool (poolId=nfs_server, default: false)
+
   Manual IPs:
     --cb-hosts "IP1 IP2"            Space-separated CB IPs
     --cb-hosts-file FILE            File with CB IPs (one per line)
     --sgw-hosts "IP1 IP2"           Space-separated SGW IPs
     --sgw-hosts-file FILE           File with SGW IPs (one per line)
+    --nfs-host IP                   NFS server IP (manual)
 
 VERSION OPTIONS:
     --cb-version VERSION            CB Server version (default: 7.6.8)
     --cb-build BUILD                CB Server build (default: 7151)
     --cb-flavor FLAVOR              CB Server flavor (auto-detected from version, can override)
     --cb-install-url URL            Custom CB install URL (overrides version/build/flavor)
-    
+
     --with-sgw true|false           Also install Sync Gateway on hosts tagged with 'sgw' (default: false)
     --sgw-version VERSION           SGW version (default: 3.3.0)
     --sgw-build BUILD               SGW build (default: 271)
@@ -90,20 +94,20 @@ BEHAVIOR OPTIONS:
     --hosts-file PATH               Custom hosts file path (default: ansible/hosts)
     --cb-group-name NAME            CB group name (default: couchbase_servers)
     --sgw-group-name NAME           SGW group name (default: sync_gateways)
-    
+
     -h, --help                      Show this help message
 
 EXAMPLES:
     # CB only (excludes hosts tagged with "sgw")
     CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2
-    
+
     # CB + SGW (also deploys to hosts tagged with "sgw")
     CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2 --with-sgw true
-    
+
     # With custom versions
     CONFIG_PASSWORD="pass" $0 --cb-pool-id longevity_cluster_2 --with-sgw true \
       --cb-version 7.6.8 --cb-build 7151
-    
+
     # From Manual IPs
     $0 --cb-hosts "172.23.105.1 172.23.105.2"
 
@@ -124,11 +128,13 @@ while [[ $# -gt 0 ]]; do
         --collection) COLLECTION="$2"; shift 2 ;;
         --cb-pool-id) CB_POOL_ID="$2"; shift 2 ;;
         --with-sgw) WITH_SGW="$2"; shift 2 ;;
+        --nfs-test) NFS_TEST="$2"; shift 2 ;;
         # Manual IP options
         --cb-hosts) CB_HOSTS="$2"; shift 2 ;;
         --cb-hosts-file) CB_HOSTS_FILE="$2"; shift 2 ;;
         --sgw-hosts) SGW_HOSTS="$2"; shift 2 ;;
         --sgw-hosts-file) SGW_HOSTS_FILE="$2"; shift 2 ;;
+        --nfs-host) NFS_HOST="$2"; shift 2 ;;
         # Common options
         --cb-version) CB_VERSION="$2"; shift 2 ;;
         --cb-build) CB_BUILD="$2"; shift 2 ;;
@@ -154,7 +160,7 @@ done
 if [[ -z "$CB_FLAVOR" ]]; then
     # Default flavor
     CB_FLAVOR="sherlock"
-    
+
     # Determine flavor based on version
     if echo "$CB_VERSION" | grep -q "^6\.5"; then
         CB_FLAVOR="mad-hatter"
@@ -177,7 +183,7 @@ if [[ -z "$CB_FLAVOR" ]]; then
     elif echo "$CB_VERSION" | grep -q "^8\.1"; then
         CB_FLAVOR="totoro"
     fi
-    
+
     echo -e "${GREEN}Auto-detected CB_FLAVOR: $CB_FLAVOR (from version $CB_VERSION)${NC}"
 fi
 
@@ -236,7 +242,7 @@ if [[ "$USE_QE_CONFIG" == true ]]; then
     # Step 1a: Fetch master node IP first
     echo -e "${YELLOW}Step 1: Fetching master node IP from QE Config Server...${NC}"
     echo ""
-    
+
 MASTER_IP=$(./fetch_hosts.sh \
     --config-server "$CONFIG_SERVER" \
     --config-port "$CONFIG_PORT" \
@@ -253,7 +259,7 @@ MASTER_IP=$(./fetch_hosts.sh \
     else
         echo -e "${GREEN}Found master node: $MASTER_IP${NC}"
     fi
-    
+
     # Step 1b: Fetch remaining CB IPs
     echo ""
     echo -e "${YELLOW}Fetching remaining Couchbase Server IPs...${NC}"
@@ -274,17 +280,17 @@ CB_IPS=$(./fetch_hosts.sh \
         echo -e "${RED}Error: Failed to fetch CB IPs${NC}"
         exit 1
     fi
-    
+
     # Create provider YAML file with CB IPs (master first)
     TEMP_YAML="provider.yaml"
     echo "---" > "$TEMP_YAML"
     echo "" >> "$TEMP_YAML"
-    
+
     # Add master node first if found
     if [[ -n "$MASTER_IP" ]]; then
         echo "$MASTER_IP" >> "$TEMP_YAML"
     fi
-    
+
     # Add remaining CB IPs (excluding master if it was in the list)
     for ip in $CB_IPS; do
         if [[ "$ip" != "$MASTER_IP" ]]; then
@@ -300,7 +306,7 @@ CB_IPS=$(./fetch_hosts.sh \
         echo ""
         echo -e "${YELLOW}Step 2: Fetching Sync Gateway IPs (hosts tagged with 'sgw')...${NC}"
         echo ""
-        
+
         SGW_IPS=$(./fetch_hosts.sh \
             --config-server "$CONFIG_SERVER" \
             --config-port "$CONFIG_PORT" \
@@ -311,7 +317,7 @@ CB_IPS=$(./fetch_hosts.sh \
             --collection "$COLLECTION" \
             --pool-id "$CB_POOL_ID" \
             --query-type sgw)
-        
+
         if [[ -z "$SGW_IPS" ]]; then
             echo -e "${YELLOW}Warning: No SGW IPs found (no hosts tagged with 'sgw' in pool)${NC}"
         else
@@ -322,29 +328,60 @@ CB_IPS=$(./fetch_hosts.sh \
             echo -e "${GREEN}Added SGW IPs to $TEMP_YAML${NC}"
         fi
     fi
+
+    # Fetch NFS server if nfs_test is enabled
+    NFS_SERVER_IP=""
+    if [[ "$NFS_TEST" == "true" ]]; then
+        echo ""
+        echo -e "${YELLOW}Fetching NFS server IP (poolId=nfs_server)...${NC}"
+        echo ""
+
+        NFS_SERVER_IP=$(./fetch_hosts.sh \
+            --config-server "$CONFIG_SERVER" \
+            --config-port "$CONFIG_PORT" \
+            --config-user "$CONFIG_USER" \
+            --config-pass "$CONFIG_PASS" \
+            --bucket "$BUCKET" \
+            --scope "$SCOPE" \
+            --collection "$COLLECTION" \
+            --pool-id "nfs_server" \
+            --query-type nfs)
+
+        if [[ -z "$NFS_SERVER_IP" ]]; then
+            echo -e "${YELLOW}Warning: No NFS server found (poolId=nfs_server)${NC}"
+        else
+            echo -e "${GREEN}Found NFS server: $NFS_SERVER_IP${NC}"
+            # Add NFS server to temporary YAML file with nfs_server: prefix
+            echo "nfs_server:$NFS_SERVER_IP" >> "$TEMP_YAML"
+            echo -e "${GREEN}Added NFS server to $TEMP_YAML${NC}"
+        fi
+    fi
 else
     # Using manual IPs
     echo -e "${YELLOW}Step 1: Using provided IPs...${NC}"
     echo ""
-    
+
     # Get CB IPs from file or command line
     if [[ -n "$CB_HOSTS_FILE" ]]; then
         CB_HOSTS=$(grep -v '^#' "$CB_HOSTS_FILE" | grep -v '^[[:space:]]*$' | tr '\n' ' ')
     fi
     CB_IPS="$CB_HOSTS"
-    
+
     # Get SGW IPs from file or command line
     SGW_IPS=""
     if [[ -n "$SGW_HOSTS_FILE" ]]; then
         SGW_HOSTS=$(grep -v '^#' "$SGW_HOSTS_FILE" | grep -v '^[[:space:]]*$' | tr '\n' ' ')
     fi
     SGW_IPS="$SGW_HOSTS"
-    
+
+    # Get NFS server IP from command line
+    NFS_SERVER_IP="$NFS_HOST"
+
     if [[ -z "$CB_IPS" ]]; then
         echo -e "${RED}Error: No IPs provided${NC}"
         exit 1
     fi
-    
+
     # Create provider YAML file with manual IPs
     TEMP_YAML="provider.yaml"
     echo "---" > "$TEMP_YAML"
@@ -353,13 +390,17 @@ else
         echo "$ip" >> "$TEMP_YAML"
     done
     echo "" >> "$TEMP_YAML"
-    
+
     if [[ -n "$SGW_IPS" ]]; then
         for ip in $SGW_IPS; do
             echo "syncgateway:$ip" >> "$TEMP_YAML"
         done
     fi
-    
+
+    if [[ -n "$NFS_SERVER_IP" ]]; then
+        echo "nfs_server:$NFS_SERVER_IP" >> "$TEMP_YAML"
+    fi
+
     echo -e "${GREEN}Created provider IP list: $TEMP_YAML${NC}"
 fi
 
@@ -415,7 +456,7 @@ if [[ -n "$SGW_IPS" ]]; then
     INSTALL_CMD="$INSTALL_CMD -e \"sgw_target_hosts=$SGW_GROUP_NAME\""
     INSTALL_CMD="$INSTALL_CMD -e \"SGW_VER=$SGW_VERSION\""
     INSTALL_CMD="$INSTALL_CMD -e \"SGW_BUILD_NO=$SGW_BUILD\""
-    
+
     # Add custom SGW install URL if provided
     if [[ -n "$SGW_INSTALL_URL" ]]; then
         INSTALL_CMD="$INSTALL_CMD -e \"SGW_URL=$SGW_INSTALL_URL\""
@@ -452,6 +493,9 @@ echo "Summary:"
 echo "  CB IPs: $CB_IPS"
 if [[ -n "$SGW_IPS" ]]; then
     echo "  SGW IPs: $SGW_IPS"
+fi
+if [[ -n "$NFS_SERVER_IP" ]]; then
+    echo "  NFS Server: $NFS_SERVER_IP"
 fi
 echo "  CB Version: $CB_VERSION-$CB_BUILD ($CB_FLAVOR)"
 if [[ -n "$SGW_IPS" ]]; then

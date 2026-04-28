@@ -46,12 +46,12 @@ QUERY OPTIONS:
     --scope NAME                    Scope name (default: _default)
     --collection NAME               Collection name (default: system_longevity_machines)
     --pool-id ID                    Pool ID to query (REQUIRED)
-    --query-type TYPE               Query type: cb or sgw (default: cb)
+    --query-type TYPE               Query type: cb, sgw, master, or nfs (default: cb)
 
 OUTPUT OPTIONS:
     --output-file FILE              Save IPs to file (one per line)
     --output-format FORMAT          Output format: list or file (default: list)
-    
+
     -h, --help                      Show this help message
 
 EXAMPLES:
@@ -122,9 +122,12 @@ if [[ "$QUERY_TYPE" == "master" ]]; then
 elif [[ "$QUERY_TYPE" == "sgw" ]]; then
     # Query for Sync Gateway hosts: pool_id AND "sgw" tag
     QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" IN poolId AND state=\"available\""
+elif [[ "$QUERY_TYPE" == "nfs" ]]; then
+    # Query for NFS server: pool_id only (no sgw exclusion)
+    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"nfs_server\" IN poolId AND state=\"available\""
 else
     # Query for Couchbase Server hosts: pool_id but NOT "sgw" tag
-    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" NOT IN poolId AND state=\"available\""
+    QUERY="SELECT ipaddr FROM \`${BUCKET}\`.\`${SCOPE}\`.\`${COLLECTION}\` WHERE \"${POOL_ID}\" IN poolId AND \"sgw\" NOT IN poolId AND \"nfs_server\" NOT IN poolId AND state=\"available\""
 fi
 
 # Build config server URL
