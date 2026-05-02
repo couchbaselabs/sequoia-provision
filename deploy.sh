@@ -472,6 +472,12 @@ if [[ "$SKIP_UNINSTALL" == true ]]; then
     INSTALL_CMD="$INSTALL_CMD -e \"PERFORM_SGW_UNINSTALL=false\""
 fi
 
+# Add NFS server IP if provided (enables NFS client setup on CB nodes)
+if [[ -n "$NFS_SERVER_IP" ]]; then
+    INSTALL_CMD="$INSTALL_CMD -e \"nfs_server=$NFS_SERVER_IP\""
+    echo -e "${GREEN}NFS client setup enabled - server: $NFS_SERVER_IP${NC}"
+fi
+
 echo "Running: $INSTALL_CMD"
 echo ""
 
