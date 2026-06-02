@@ -478,6 +478,23 @@ if [[ -n "$NFS_SERVER_IP" ]]; then
     echo -e "${GREEN}NFS client setup enabled - server: $NFS_SERVER_IP${NC}"
 fi
 
+# Add S3 credentials if provided (for backup/restore tests)
+if [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+    INSTALL_CMD="$INSTALL_CMD -e \"aws_access_key_id=$AWS_ACCESS_KEY_ID\""
+    INSTALL_CMD="$INSTALL_CMD -e \"aws_secret_access_key=$AWS_SECRET_ACCESS_KEY\""
+    echo -e "${GREEN}S3 credentials will be configured on target nodes${NC}"
+fi
+
+# Add Azure credentials if provided (for backup/restore tests)
+if [[ -n "$AZURE_STORAGE_ACCOUNT" && -n "$AZURE_STORAGE_KEY" ]]; then
+    INSTALL_CMD="$INSTALL_CMD -e \"azure_storage_account=$AZURE_STORAGE_ACCOUNT\""
+    INSTALL_CMD="$INSTALL_CMD -e \"azure_storage_key=$AZURE_STORAGE_KEY\""
+    if [[ -n "$AZURE_STORAGE_ENDPOINT" ]]; then
+        INSTALL_CMD="$INSTALL_CMD -e \"azure_storage_endpoint=$AZURE_STORAGE_ENDPOINT\""
+    fi
+    echo -e "${GREEN}Azure credentials will be configured on target nodes${NC}"
+fi
+
 echo "Running: $INSTALL_CMD"
 echo ""
 
