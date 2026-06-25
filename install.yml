@@ -3,7 +3,7 @@
 # Usage: ansible-playbook -i ansible/hosts install.yml -e "target_hosts=centos2" -e "FLAVOR=trinity" -e "VER=7.6.8" -e "BUILD_NO=7151"
 # With SGW: ansible-playbook -i ansible/hosts install.yml -e "target_hosts=centos2" -e "FLAVOR=trinity" -e "VER=7.6.8" -e "BUILD_NO=7151" -e "sgw_target_hosts=syncgateways" -e "SGW_VER=3.3.0" -e "SGW_BUILD_NO=271"
 
-- hosts: "{{ target_hosts }}" 
+- hosts: "{{ target_hosts }}"
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
     build_no:  "{{BUILD_NO|default(2601)}}"
@@ -21,76 +21,76 @@
 
   - name: set vm.swappiness to 0
     shell: "echo 0 > /proc/sys/vm/swappiness"
-  
+
   - name: disable thp
     shell: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
     ignore_errors: True
-  
+
   - name: remove core conf file if any
     shell: "rm -f /etc/security/limits.d/core.conf"
     ignore_errors: True
-  
+
   - name: create core conf file
     shell: "touch /etc/security/limits.d/core.conf"
-  
+
   - name: append hard core limit
     shell: "echo 'couchbase       hard        core        unlimited' >> /etc/security/limits.d/core.conf"
-  
+
   - name: append soft core limit
     shell: "echo 'couchbase       soft        core        unlimited' >> /etc/security/limits.d/core.conf"
-  
+
   - name: set default limit core to infinity step 1
     shell: "echo '[Manager]' > /etc/systemd/system.conf"
-  
+
   - name: set default limit core to infinity step 2
     shell: "echo 'DefaultLimitCORE=infinity' >> /etc/systemd/system.conf"
-  
+
   - name: reload systemctl daemon
     shell: "systemctl daemon-reexec"
-  
+
   - name: disable thp defrag
     shell: "echo never > /sys/kernel/mm/transparent_hugepage/defrag"
     ignore_errors: True
-  
+
   - name: cleanup old pkg dirs
     shell: "rm {{deb_path}} 2>/dev/null"
     ignore_errors: True
-  
+
   - name: rm locks
     shell: "rm /var/lib/dpkg/lock"
     ignore_errors: True
-  
+
   - name: rm front end locks
     shell: "rm /var/lib/dpkg/lock-frontend"
     ignore_errors: True
-  
+
   - name: configure
     shell: "dpkg --configure -a"
-  
+
   - name: stop couchbase
     shell: "ps aux | grep 'couchbase' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
-  
+
   - name: stop memcached
     shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
-  
+
   - name: uninstall couchbase
     apt: name=couchbase-server state=absent
-  
+
   - name: rm opt dir
     shell: "rm -rf /opt/couchbase"
-  
+
   - name: rm data dir
     shell: "rm -rf /data/*"
-  
+
   - name: rm index dir
     shell: "rm -rf /index/*"
-  
+
   - name: remove all hidden files
     shell: "rm -rf /data/.*"
     ignore_errors: True
-  
+
   - name: create couchbase directory
     file:
       path: /data/couchbase
@@ -98,7 +98,7 @@
       owner: couchbase
       group: couchbase
       mode: '0777'
-  
+
   - name: create backup archive location
     file:
       path: /data/archive
@@ -106,7 +106,7 @@
       owner: couchbase
       group: couchbase
       mode: '0777'
-  
+
   - name: create backup s3 location
     file:
       path: /data/s3
@@ -114,7 +114,7 @@
       owner: couchbase
       group: couchbase
       mode: '0777'
-  
+
   - name: create backup gcp location
     file:
       path: /data/gcp
@@ -122,7 +122,7 @@
       owner: couchbase
       group: couchbase
       mode: '0777'
-  
+
   - name: create backup azure location
     file:
       path: /data/azure
@@ -130,17 +130,17 @@
       owner: couchbase
       group: couchbase
       mode: '0777'
-  
+
   - name: set /data to be owned by couchbase
     shell: "chown -R couchbase:couchbase /data"
-  
+
   - name: chmod /data to 777
     shell: "chmod -R 777 /data"
-  
+
   - name: stop memcached
     shell: "ps aux | grep 'memcached' | awk '{print $2}' | xargs kill -s 9"
     ignore_errors: True
-    
+
 - hosts: "{{ target_hosts }}"
   serial: 1
   vars:
@@ -155,11 +155,11 @@
   remote_user: root
   tasks:
   - debug: msg="Download {{build_url}}"
-  
+
   - name: download binary
     get_url: url="{{build_url}}" dest="{{deb_path}}"
- 
-- hosts: "{{ target_hosts }}" 
+
+- hosts: "{{ target_hosts }}"
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
     build_no:  "{{BUILD_NO|default(2601)}}"
@@ -173,9 +173,63 @@
   tasks:
   - name: install couchbase
     apt: deb="{{deb_path}}"
-  
+
   - name: wait for install done
     wait_for: port=8091 delay=10
+
+# Set S3 credentials as environment variables (if provided)
+- hosts: "{{ target_hosts }}"
+  gather_facts: no
+  vars:
+    s3_access_key: "{{ aws_access_key_id | default('') }}"
+    s3_secret_key: "{{ aws_secret_access_key | default('') }}"
+  remote_user: root
+  tasks:
+    - name: S3 CREDENTIALS | Check if S3 setup is enabled
+      set_fact:
+        s3_enabled: "{{ s3_access_key | length > 0 and s3_secret_key | length > 0 }}"
+
+    - name: S3 CREDENTIALS | Create environment file for S3 credentials
+      copy:
+        dest: /etc/profile.d/s3_credentials.sh
+        content: |
+          export AWS_ACCESS_KEY_ID="{{ s3_access_key }}"
+          export AWS_SECRET_ACCESS_KEY="{{ s3_secret_key }}"
+        mode: "0644"
+      when: s3_enabled
+
+    - name: S3 CREDENTIALS | Configuration complete
+      debug:
+        msg: "S3 credentials configured in /etc/profile.d/s3_credentials.sh"
+      when: s3_enabled
+
+# Set Azure credentials as environment variables (if provided)
+- hosts: "{{ target_hosts }}"
+  gather_facts: no
+  vars:
+    azure_account: "{{ azure_storage_account | default('') }}"
+    azure_key: "{{ azure_storage_key | default('') }}"
+    azure_endpoint: "{{ azure_storage_endpoint | default('') }}"
+  remote_user: root
+  tasks:
+    - name: AZURE CREDENTIALS | Check if Azure setup is enabled
+      set_fact:
+        azure_enabled: "{{ azure_account | length > 0 and azure_key | length > 0 }}"
+
+    - name: AZURE CREDENTIALS | Create environment file for Azure credentials
+      copy:
+        dest: /etc/profile.d/azure_credentials.sh
+        content: |
+          export AZURE_STORAGE_ACCOUNT="{{ azure_account }}"
+          export AZURE_STORAGE_KEY="{{ azure_key }}"
+          export AZURE_STORAGE_ENDPOINT="{{ azure_endpoint }}"
+        mode: "0644"
+      when: azure_enabled
+
+    - name: AZURE CREDENTIALS | Configuration complete
+      debug:
+        msg: "Azure credentials configured in /etc/profile.d/azure_credentials.sh"
+      when: azure_enabled
 
 # Install Sync Gateway (if sgw_target_hosts is provided)
 - hosts: "{{ sgw_target_hosts | default('none') }}"
@@ -243,7 +297,7 @@
 
     - name: SYNC GATEWAY | Install sync_gateway dpkg
       shell: "dpkg -i --force-overwrite --force-confnew /tmp/{{ sgw_package }}"
-      when: 
+      when:
         - perform_install | default(true)
         - sgw_download is succeeded
 
@@ -261,7 +315,7 @@
     - name: SYNC GATEWAY | Verify installation success
       debug:
         msg: "Sync Gateway installed and running on port 4984"
-      when: 
+      when:
         - perform_install | default(true)
         - sgw_port_check is succeeded
 
@@ -275,18 +329,18 @@
     nfs_server_ip: "{{ nfs_server | default('') }}"
   remote_user: root
   tasks:
-<<<<<<< HEAD
-    - name: NFS CLIENT | Check if NFS setup is enabled
-      set_fact:
-        nfs_enabled: "{{ nfs_server_ip | length > 0 }}"
+    - name: NFS CLIENT | Skip play when NFS setup is not enabled
+      meta: end_play
+      when: nfs_server_ip | length == 0
+
     - name: NFS CLIENT | Check if NFS setup is enabled
       set_fact:
         nfs_enabled: "{{ nfs_server_ip | length > 0 }}"
         is_nfs_server: "{{ (ansible_host | default(inventory_hostname)) == nfs_server_ip or inventory_hostname == nfs_server_ip }}"
->>>>>>> upstream/master
 
     - name: NFS CLIENT | Update apt cache
       apt:
+        update_cache: yes
         cache_valid_time: 3600
       ignore_errors: True
       when:
@@ -361,9 +415,25 @@
         - nfs_enabled
         - not is_nfs_server
 
+    - name: NFS CLIENT | Clean up longevity backup directory
+      file:
+        path: "{{ mount_point }}/test_longevity_backup"
+        state: absent
+      when:
+        - nfs_enabled
+        - not is_nfs_server
+
     - name: NFS CLIENT | Clean up test continuous backup directory
       file:
         path: "{{ mount_point }}/test_system_continuous_backup"
+        state: absent
+      when:
+        - nfs_enabled
+        - not is_nfs_server
+
+    - name: NFS CLIENT | Clean up longevity continuous backup directory
+      file:
+        path: "{{ mount_point }}/test_longevity_continuous_backup"
         state: absent
       when:
         - nfs_enabled
@@ -375,7 +445,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
-    
+
     - name: create backup archive location
       file:
         path: "{{ mount_point }}/test_system_backup"
@@ -390,6 +460,28 @@
     - name: create continuous backup archive location
       file:
         path: "{{ mount_point }}/test_system_continuous_backup"
+        state: directory
+        owner: couchbase
+        group: couchbase
+        mode: '0777'
+      when:
+        - nfs_enabled
+        - not is_nfs_server
+
+    - name: create backup archive location for longevity
+      file:
+        path: "{{ mount_point }}/test_longevity_backup"
+        state: directory
+        owner: couchbase
+        group: couchbase
+        mode: '0777'
+      when:
+        - nfs_enabled
+        - not is_nfs_server
+
+    - name: create continuous backup archive location for longevity
+      file:
+        path: "{{ mount_point }}/test_longevity_continuous_backup"
         state: directory
         owner: couchbase
         group: couchbase
