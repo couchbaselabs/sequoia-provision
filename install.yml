@@ -411,6 +411,7 @@
       file:
         path: "{{ mount_point }}/test_system_backup"
         state: absent
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -419,6 +420,7 @@
       file:
         path: "{{ mount_point }}/test_longevity_backup"
         state: absent
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -427,6 +429,7 @@
       file:
         path: "{{ mount_point }}/test_system_continuous_backup"
         state: absent
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -435,6 +438,7 @@
       file:
         path: "{{ mount_point }}/test_longevity_continuous_backup"
         state: absent
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -453,6 +457,7 @@
         owner: couchbase
         group: couchbase
         mode: '0777'
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -464,6 +469,7 @@
         owner: couchbase
         group: couchbase
         mode: '0777'
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -475,6 +481,7 @@
         owner: couchbase
         group: couchbase
         mode: '0777'
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
@@ -486,6 +493,7 @@
         owner: couchbase
         group: couchbase
         mode: '0777'
+      run_once: true
       when:
         - nfs_enabled
         - not is_nfs_server
