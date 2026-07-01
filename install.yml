@@ -231,6 +231,44 @@
         msg: "Azure credentials configured in /etc/profile.d/azure_credentials.sh"
       when: azure_enabled
 
+# Set GCP credentials (if provided)
+- hosts: "{{ target_hosts }}"
+  gather_facts: no
+  vars:
+    gcp_key_file: "{{ gcp_service_account_file | default('') }}"
+  remote_user: root
+  tasks:
+    - name: GCP CREDENTIALS | Check if GCP setup is enabled
+      set_fact:
+        gcp_enabled: "{{ gcp_key_file | length > 0 }}"
+
+    - name: GCP CREDENTIALS | Create directory for GCP credentials
+      file:
+        path: /etc/google
+        state: directory
+        mode: "0755"
+      when: gcp_enabled
+
+    - name: GCP CREDENTIALS | Copy GCP service account key file
+      copy:
+        src: "{{ gcp_key_file }}"
+        dest: /etc/google/service_account.json
+        mode: "0600"
+      when: gcp_enabled
+
+    - name: GCP CREDENTIALS | Create environment file for GCP credentials
+      copy:
+        dest: /etc/profile.d/gcp_credentials.sh
+        content: |
+          export GOOGLE_APPLICATION_CREDENTIALS="/etc/google/service_account.json"
+        mode: "0644"
+      when: gcp_enabled
+
+    - name: GCP CREDENTIALS | Configuration complete
+      debug:
+        msg: "GCP credentials configured in /etc/google/service_account.json"
+      when: gcp_enabled
+
 # Install Sync Gateway (if sgw_target_hosts is provided)
 - hosts: "{{ sgw_target_hosts | default('none') }}"
   gather_facts: no
