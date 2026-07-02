@@ -495,6 +495,12 @@ if [[ -n "$AZURE_STORAGE_ACCOUNT" && -n "$AZURE_STORAGE_KEY" ]]; then
     echo -e "${GREEN}Azure credentials will be configured on target nodes${NC}"
 fi
 
+# Add GCP credentials if provided (for backup/restore tests)
+if [[ -n "$GCP_SERVICE_ACCOUNT_FILE" ]]; then
+    INSTALL_CMD="$INSTALL_CMD -e \"gcp_service_account_file=$GCP_SERVICE_ACCOUNT_FILE\""
+    echo -e "${GREEN}GCP credentials will be configured on target nodes${NC}"
+fi
+
 echo "Running: $INSTALL_CMD"
 echo ""
 
