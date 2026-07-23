@@ -159,6 +159,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Enforce mutual exclusivity of NFS test modes
+if [[ "$NFS_LONGEVITY_TEST" == "true" && "$NFS_COMPONENT_TEST" == "true" ]]; then
+    echo -e "${RED}Error: NFS_LONGEVITY_TEST and NFS_COMPONENT_TEST cannot both be true. Enable only one.${NC}"
+    exit 1
+fi
+
 # Auto-compute CB_FLAVOR from CB_VERSION if not explicitly set
 if [[ -z "$CB_FLAVOR" ]]; then
     # Default flavor
