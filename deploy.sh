@@ -19,7 +19,8 @@ SCOPE="_default"
 COLLECTION="system_longevity_machines"
 CB_POOL_ID=""
 WITH_SGW=false
-NFS_TEST=false
+NFS_LONGEVITY_TEST=false
+NFS_COMPONENT_TEST=false
 
 # Manual IP options
 CB_HOSTS=""
@@ -68,7 +69,8 @@ INPUT OPTIONS (Choose one):
     --bucket NAME                   Bucket (default: QE-server-pool)
     --scope NAME                    Scope (default: _default)
     --collection NAME               Collection (default: system_longevity_machines)
-    --nfs-test true|false           Fetch NFS server from pool (poolId=nfs_server, default: false)
+    --nfs-longevity-test true|false  Fetch NFS server from pool for longevity tests (poolId=nfs_server, default: false)
+    --nfs-component-test true|false  Fetch NFS server from pool for component tests (poolId=nfs_server, default: false)
 
   Manual IPs:
     --cb-hosts "IP1 IP2"            Space-separated CB IPs
@@ -128,7 +130,8 @@ while [[ $# -gt 0 ]]; do
         --collection) COLLECTION="$2"; shift 2 ;;
         --cb-pool-id) CB_POOL_ID="$2"; shift 2 ;;
         --with-sgw) WITH_SGW="$2"; shift 2 ;;
-        --nfs-test) NFS_TEST="$2"; shift 2 ;;
+        --nfs-longevity-test) NFS_LONGEVITY_TEST="$2"; shift 2 ;;
+        --nfs-component-test) NFS_COMPONENT_TEST="$2"; shift 2 ;;
         # Manual IP options
         --cb-hosts) CB_HOSTS="$2"; shift 2 ;;
         --cb-hosts-file) CB_HOSTS_FILE="$2"; shift 2 ;;
@@ -329,9 +332,9 @@ CB_IPS=$(./fetch_hosts.sh \
         fi
     fi
 
-    # Fetch NFS server if nfs_test is enabled
+    # Fetch NFS server if either NFS test mode is enabled
     NFS_SERVER_IP=""
-    if [[ "$NFS_TEST" == "true" ]]; then
+    if [[ "$NFS_LONGEVITY_TEST" == "true" || "$NFS_COMPONENT_TEST" == "true" ]]; then
         echo ""
         echo -e "${YELLOW}Fetching NFS server IP (poolId=nfs_server)...${NC}"
         echo ""
@@ -475,6 +478,12 @@ fi
 # Add NFS server IP if provided (enables NFS client setup on CB nodes)
 if [[ -n "$NFS_SERVER_IP" ]]; then
     INSTALL_CMD="$INSTALL_CMD -e \"nfs_server=$NFS_SERVER_IP\""
+    if [[ "$NFS_LONGEVITY_TEST" == "true" ]]; then
+        INSTALL_CMD="$INSTALL_CMD -e \"nfs_longevity_test=true\""
+    fi
+    if [[ "$NFS_COMPONENT_TEST" == "true" ]]; then
+        INSTALL_CMD="$INSTALL_CMD -e \"nfs_component_test=true\""
+    fi
     echo -e "${GREEN}NFS client setup enabled - server: $NFS_SERVER_IP${NC}"
 fi
 

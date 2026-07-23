@@ -365,6 +365,8 @@
     nfs_share: "{{ NFS_SHARE | default('/data') }}"
     mount_point: "{{ MOUNT_POINT | default('/mnt/nfs_data') }}"
     nfs_server_ip: "{{ nfs_server | default('') }}"
+    nfs_longevity_test_enabled: "{{ nfs_longevity_test | default(false) | bool }}"
+    nfs_component_test_enabled: "{{ nfs_component_test | default(false) | bool }}"
   remote_user: root
   tasks:
     - name: NFS CLIENT | Skip play when NFS setup is not enabled
@@ -453,6 +455,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_component_test_enabled
 
     - name: NFS CLIENT | Clean up longevity backup directory
       file:
@@ -462,6 +465,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_longevity_test_enabled
 
     - name: NFS CLIENT | Clean up test continuous backup directory
       file:
@@ -471,6 +475,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_component_test_enabled
 
     - name: NFS CLIENT | Clean up longevity continuous backup directory
       file:
@@ -480,6 +485,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_longevity_test_enabled
 
     - name: NFS CLIENT | Installation complete
       debug:
@@ -499,6 +505,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_component_test_enabled
 
     - name: create continuous backup archive location
       file:
@@ -511,6 +518,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_component_test_enabled
 
     - name: create backup archive location for longevity
       file:
@@ -523,6 +531,7 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_longevity_test_enabled
 
     - name: create continuous backup archive location for longevity
       file:
@@ -535,3 +544,4 @@
       when:
         - nfs_enabled
         - not is_nfs_server
+        - nfs_longevity_test_enabled
