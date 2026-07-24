@@ -26,7 +26,8 @@ pipeline {
 
         string(name: 'SGW_INSTALL_URL', defaultValue: '', description: 'Sync Gateway install URL')
         booleanParam(name: 'WITH_SGW', defaultValue: false, description: 'Include Sync Gateway')
-        booleanParam(name: 'NFS_TEST', defaultValue: false, description: 'Fetch NFS server from pool (poolId=nfs_server)')
+        booleanParam(name: 'NFS_LONGEVITY_TEST', defaultValue: false, description: 'Fetch NFS server from pool for longevity tests (poolId=nfs_server)')
+        booleanParam(name: 'NFS_COMPONENT_TEST', defaultValue: false, description: 'Fetch NFS server from pool for component tests (poolId=nfs_server)')
 
 
         string(name: 'SCALE', defaultValue: '1', description: 'Scale parameter for sequoia')
@@ -172,7 +173,8 @@ pipeline {
                                         --cb-install-url '${params.CB_INSTALL_URL}' \
                                         --sgw-install-url '${params.SGW_INSTALL_URL}' \
                                         --with-sgw ${params.WITH_SGW} \
-                                        --nfs-test ${params.NFS_TEST}
+                                        --nfs-longevity-test ${params.NFS_LONGEVITY_TEST} \
+                                        --nfs-component-test ${params.NFS_COMPONENT_TEST}
                                 """
                             }
                             echo ">>> Deployment completed successfully"
