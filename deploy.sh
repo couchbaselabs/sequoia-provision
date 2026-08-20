@@ -191,6 +191,8 @@ if [[ -z "$CB_FLAVOR" ]]; then
         CB_FLAVOR="morpheus"
     elif echo "$CB_VERSION" | grep -q "^8\.1"; then
         CB_FLAVOR="totoro"
+    elif echo "$CB_VERSION" | grep -q "^8\.5"; then
+        CB_FLAVOR="totoro"
     fi
 
     echo -e "${GREEN}Auto-detected CB_FLAVOR: $CB_FLAVOR (from version $CB_VERSION)${NC}"
