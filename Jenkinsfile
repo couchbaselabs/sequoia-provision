@@ -48,8 +48,10 @@ pipeline {
         string(name: 'DOCKER_CREDS_ID', defaultValue: 'sys_test_docker_cred',
                description: 'Jenkins usernamePassword credentials ID for Docker Hub. Set it to refresh the docker login before each test run; leave empty to reuse the existing login on the slave.')
 
-        booleanParam(name: 'TRIGGER_LOG_PARSER', defaultValue: true,
-                     description: 'After install, stop any running system_test_log_parser build for this cluster master and trigger a fresh one')
+        booleanParam(name: 'START_EAGLE_EYE', defaultValue: false,
+                     description: 'After install, stop any running eagle eye (system_test_log_parser) build for this cluster master and start a fresh one')
+        string(name: 'EMAIL_RECIPIENTS', defaultValue: '',
+               description: 'Comma-separated recipients for the eagle eye run. Leave empty to keep the log parser job default.')
         string(name: 'LOG_PARSER_URL', defaultValue: 'http://172.23.121.80/job/system_test_log_parser',
                description: 'Job URL of the system test log parser')
         string(name: 'LOG_PARSER_TOKEN', defaultValue: 'pipeline_trigger',
@@ -240,7 +242,7 @@ pipeline {
                     // deploy.sh writes the pool's master_node=true host first into provider.yaml, and
                     // sequoia treats the first entry as its orchestrator (lib/template.go Orchestrator),
                     // so that IP is the cluster identity both jobs agree on.
-                    if (params.TRIGGER_LOG_PARSER) {
+                    if (params.START_EAGLE_EYE) {
                         def masterNode = sh(
                             script: "grep -m1 -E '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+' /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml | tr -d '[:space:]'",
                             returnStdout: true).trim()
@@ -273,6 +275,12 @@ pipeline {
                                 fi
                                 cat "$CFG" > "$CFG_TRIG"
                                 printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
+                                if [ -n "$EMAIL_RECIPIENTS" ]; then
+                                    printf 'data-urlencode = "email_recipients=%s"\\n' "$EMAIL_RECIPIENTS" >> "$CFG_TRIG"
+                                    echo ">>> Eagle eye recipients: $EMAIL_RECIPIENTS"
+                                else
+                                    echo ">>> Eagle eye recipients: job default"
+                                fi
 
                                 # This Jenkins has CSRF protection on, and password/basic-auth POSTs are
                                 # not exempt the way API-token POSTs are. A crumb alone still 403s: it is
@@ -313,11 +321,11 @@ pipeline {
                                     done
                                 fi
 
-                                echo ">>> Triggering new log parser build for $MASTER_NODE"
+                                echo ">>> Starting eagle eye for $MASTER_NODE"
                                 CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG_TRIG" -b "$JAR" -c "$JAR" -H "$CRUMB_HDR" -X POST "$LP_URL/buildWithParameters" --data-urlencode "master_node=$MASTER_NODE")
                                 echo ">>> trigger -> HTTP $CODE"
                                 case "$CODE" in
-                                    2*|3*) echo ">>> Log parser triggered" ;;
+                                    2*|3*) echo ">>> Eagle eye started" ;;
                                     *) echo ">>> ERROR: trigger failed"; RC=1 ;;
                                 esac
 
@@ -328,6 +336,7 @@ pipeline {
                         try {
                             withEnv(["LP_URL=${params.LOG_PARSER_URL}",
                                      "LP_TOKEN=${params.LOG_PARSER_TOKEN}",
+                                     "EMAIL_RECIPIENTS=${params.EMAIL_RECIPIENTS}",
                                      "MASTER_NODE=${masterNode}"]) {
                                 if (params.LOG_PARSER_CREDS_ID?.trim()) {
                                     withCredentials([usernamePassword(credentialsId: params.LOG_PARSER_CREDS_ID,
@@ -343,7 +352,7 @@ pipeline {
                             }
                         } catch (err) {
                             // A longevity run must not die because log parsing could not be re-pointed.
-                            echo ">>> WARNING: log parser sync failed (${err.getMessage()})"
+                            echo ">>> WARNING: eagle eye sync failed (${err.getMessage()})"
                             currentBuild.result = 'UNSTABLE'
                         }
                     }
