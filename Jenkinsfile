@@ -191,25 +191,30 @@ pipeline {
 
                     echo ">>> Starting sequoia tests..."
                     dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                        sh """
-                            ./sequoia \
-                                -client ${env.SLAVE_IP}:2375 \
-                                -provider file:provider.yml \
-                                -test ${params.TEST_FILE} \
-                                -scale ${params.SCALE} \
-                                -repeat ${params.REPEAT} \
-                                -log_level ${params.LOG_LEVEL} \
-                                -version ${params.CB_VERSION} \
-                                -skip_setup=${params.SKIP_SETUP} \
-                                -skip_test=${params.SKIP_TEST} \
-                                -skip_teardown=${params.SKIP_TEARDOWN} \
-                                -skip_cleanup=${params.SKIP_CLEANUP} \
-                                -continue=${params.CONTINUE} \
-                                -collect_on_error=${params.COLLECT_ON_ERROR} \
-                                -stop_on_error=${params.STOP_ON_ERROR} \
-                                -duration=${params.DURATION} \
-                                -show_topology=${params.SHOW_TOPOLOGY}
-                        """
+                        // sequoia reads Docker Hub creds only from $DOCKER_CONFIG/config.json,
+                        // falling back to $HOME/.docker/config.json. The Jenkins agent's $HOME is
+                        // not /root, so pin it to where `docker login` on the slave wrote them.
+                        withEnv(['DOCKER_CONFIG=/root/.docker']) {
+                            sh """
+                                ./sequoia \
+                                    -client ${env.SLAVE_IP}:2375 \
+                                    -provider file:provider.yml \
+                                    -test ${params.TEST_FILE} \
+                                    -scale ${params.SCALE} \
+                                    -repeat ${params.REPEAT} \
+                                    -log_level ${params.LOG_LEVEL} \
+                                    -version ${params.CB_VERSION} \
+                                    -skip_setup=${params.SKIP_SETUP} \
+                                    -skip_test=${params.SKIP_TEST} \
+                                    -skip_teardown=${params.SKIP_TEARDOWN} \
+                                    -skip_cleanup=${params.SKIP_CLEANUP} \
+                                    -continue=${params.CONTINUE} \
+                                    -collect_on_error=${params.COLLECT_ON_ERROR} \
+                                    -stop_on_error=${params.STOP_ON_ERROR} \
+                                    -duration=${params.DURATION} \
+                                    -show_topology=${params.SHOW_TOPOLOGY}
+                            """
+                        }
                     }
                 }
             }
