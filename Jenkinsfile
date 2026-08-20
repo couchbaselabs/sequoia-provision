@@ -56,8 +56,6 @@ pipeline {
                description: 'Job URL of the system test log parser')
         string(name: 'LOG_PARSER_TOKEN', defaultValue: 'pipeline_trigger',
                description: "Log parser job's 'Trigger builds remotely' authentication token")
-        string(name: 'LOG_PARSER_CREDS_ID', defaultValue: 'qeinfra_log_parser',
-               description: 'Jenkins usernamePassword credentials ID for an account with Job/Cancel on the log parser job (password or API token both work as basic auth). Required to STOP running builds - the trigger token alone can only start them. Leave empty to skip the stop step.')
 
         // Git customization parameters
     }
@@ -270,9 +268,7 @@ pipeline {
                                 trap 'rm -f "$CFG" "$CFG_TRIG" "$JAR"' EXIT
                                 chmod 600 "$CFG" "$CFG_TRIG" "$JAR"
                                 : > "$CFG"
-                                if [ -n "$LP_USER" ]; then
-                                    printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_PASSWORD" >> "$CFG"
-                                fi
+                                printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_PASSWORD" >> "$CFG"
                                 cat "$CFG" > "$CFG_TRIG"
                                 printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
                                 if [ -n "$EMAIL_RECIPIENTS" ]; then
@@ -306,9 +302,6 @@ pipeline {
                                 if [ -z "$RUNNING" ]; then
                                     echo ">>> No running build for this master node"
                                 else
-                                    if [ -z "$LP_USER" ]; then
-                                        echo ">>> WARNING: LOG_PARSER_CREDS_ID is empty; stopping a build needs Job/Cancel, which the trigger token does not grant"
-                                    fi
                                     for b in $RUNNING; do
                                         CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG" -b "$JAR" -c "$JAR" -H "$CRUMB_HDR" -X POST "$LP_URL/$b/stop")
                                         echo ">>> stop build #$b -> HTTP $CODE"
@@ -338,16 +331,10 @@ pipeline {
                                      "LP_TOKEN=${params.LOG_PARSER_TOKEN}",
                                      "EMAIL_RECIPIENTS=${params.EMAIL_RECIPIENTS}",
                                      "MASTER_NODE=${masterNode}"]) {
-                                if (params.LOG_PARSER_CREDS_ID?.trim()) {
-                                    withCredentials([usernamePassword(credentialsId: params.LOG_PARSER_CREDS_ID,
-                                                                      usernameVariable: 'LP_USER',
-                                                                      passwordVariable: 'LP_PASSWORD')]) {
-                                        syncLogParser()
-                                    }
-                                } else {
-                                    withEnv(['LP_USER=', 'LP_PASSWORD=']) {
-                                        syncLogParser()
-                                    }
+                                withCredentials([usernamePassword(credentialsId: 'jenkins_qe_infra_user',
+                                                                  usernameVariable: 'LP_USER',
+                                                                  passwordVariable: 'LP_PASSWORD')]) {
+                                    syncLogParser()
                                 }
                             }
                         } catch (err) {
