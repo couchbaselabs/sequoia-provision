@@ -48,6 +48,15 @@ pipeline {
         string(name: 'DOCKER_CREDS_ID', defaultValue: 'sys_test_docker_cred',
                description: 'Jenkins usernamePassword credentials ID for Docker Hub. Set it to refresh the docker login before each test run; leave empty to reuse the existing login on the slave.')
 
+        booleanParam(name: 'TRIGGER_LOG_PARSER', defaultValue: true,
+                     description: 'After install, stop any running system_test_log_parser build for this cluster master and trigger a fresh one')
+        string(name: 'LOG_PARSER_URL', defaultValue: 'http://172.23.121.80/job/system_test_log_parser',
+               description: 'Job URL of the system test log parser')
+        string(name: 'LOG_PARSER_TOKEN', defaultValue: 'pipeline_trigger',
+               description: "Log parser job's 'Trigger builds remotely' authentication token")
+        string(name: 'LOG_PARSER_CREDS_ID', defaultValue: '',
+               description: 'Optional Jenkins usernamePassword credentials ID (username + API token) holding Job/Cancel on the log parser job. Required to STOP running builds - the trigger token alone can only start them.')
+
         // Git customization parameters
     }
 
@@ -225,6 +234,93 @@ pipeline {
                         }
                     } else {
                         echo ">>> DOCKER_CREDS_ID not set - reusing existing login at ${dockerCfgDir}"
+                    }
+
+                    // The log parser job tracks one cluster, keyed by its master_node param.
+                    // deploy.sh writes the pool's master_node=true host first into provider.yaml, and
+                    // sequoia treats the first entry as its orchestrator (lib/template.go Orchestrator),
+                    // so that IP is the cluster identity both jobs agree on.
+                    if (params.TRIGGER_LOG_PARSER) {
+                        def masterNode = sh(
+                            script: "grep -m1 -E '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+' /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml | tr -d '[:space:]'",
+                            returnStdout: true).trim()
+                        echo ">>> Cluster master node: ${masterNode}"
+
+                        def syncLogParser = {
+                            sh '''
+                                set +x
+                                if [ -z "$MASTER_NODE" ]; then
+                                    echo "ERROR: no master node found in provider.yml"
+                                    exit 1
+                                fi
+                                if ! command -v jq >/dev/null 2>&1; then
+                                    echo "ERROR: jq is required to read the log parser build list"
+                                    exit 1
+                                fi
+
+                                # Keep the API token and trigger token out of argv (visible in ps) by
+                                # passing them through curl config files instead of command flags.
+                                CFG=$(mktemp)
+                                CFG_TRIG=$(mktemp)
+                                trap 'rm -f "$CFG" "$CFG_TRIG"' EXIT
+                                chmod 600 "$CFG" "$CFG_TRIG"
+                                : > "$CFG"
+                                if [ -n "$LP_USER" ]; then
+                                    printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_API_TOKEN" >> "$CFG"
+                                fi
+                                cat "$CFG" > "$CFG_TRIG"
+                                printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
+
+                                echo ">>> Looking for running builds with master_node=$MASTER_NODE"
+                                RUNNING=$(curl -sS -K "$CFG" -G "$LP_URL/api/json" --data-urlencode 'tree=builds[number,building,actions[parameters[name,value]]]{0,300}' | jq -r --arg m "$MASTER_NODE" '.builds[] | select(.building) | select(any(.actions[]?.parameters[]?; .name == "master_node" and .value == $m)) | .number')
+
+                                if [ -z "$RUNNING" ]; then
+                                    echo ">>> No running build for this master node"
+                                else
+                                    if [ -z "$LP_USER" ]; then
+                                        echo ">>> WARNING: LOG_PARSER_CREDS_ID is empty; stopping a build needs Job/Cancel, which the trigger token does not grant"
+                                    fi
+                                    for b in $RUNNING; do
+                                        CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG" -X POST "$LP_URL/$b/stop")
+                                        echo ">>> stop build #$b -> HTTP $CODE"
+                                        case "$CODE" in
+                                            2*|3*) ;;
+                                            *) echo "ERROR: could not stop build #$b"; exit 1 ;;
+                                        esac
+                                    done
+                                fi
+
+                                echo ">>> Triggering new log parser build for $MASTER_NODE"
+                                CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG_TRIG" -X POST "$LP_URL/buildWithParameters" --data-urlencode "master_node=$MASTER_NODE")
+                                echo ">>> trigger -> HTTP $CODE"
+                                case "$CODE" in
+                                    2*|3*) echo ">>> Log parser triggered" ;;
+                                    *) echo "ERROR: trigger failed"; exit 1 ;;
+                                esac
+                            '''
+                        }
+
+                        try {
+                            withEnv(["LP_URL=${params.LOG_PARSER_URL}",
+                                     "LP_TOKEN=${params.LOG_PARSER_TOKEN}",
+                                     "MASTER_NODE=${masterNode}"]) {
+                                if (params.LOG_PARSER_CREDS_ID?.trim()) {
+                                    withCredentials([usernamePassword(credentialsId: params.LOG_PARSER_CREDS_ID,
+                                                                      usernameVariable: 'LP_USER',
+                                                                      passwordVariable: 'LP_API_TOKEN')]) {
+                                        syncLogParser()
+                                    }
+                                } else {
+                                    withEnv(['LP_USER=', 'LP_API_TOKEN=']) {
+                                        syncLogParser()
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            // A longevity run must not die because log parsing could not be re-pointed.
+                            echo ">>> WARNING: log parser sync failed (${err.getMessage()})"
+                            currentBuild.result = 'UNSTABLE'
+                        }
                     }
 
                     echo ">>> Starting sequoia tests..."
