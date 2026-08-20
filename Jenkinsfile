@@ -45,6 +45,9 @@ pipeline {
 
         string(name: 'LOG_LEVEL', defaultValue: '0', description: 'Logging level (0–5)')
 
+        string(name: 'DOCKER_CREDS_ID', defaultValue: 'sys_test_docker_cred',
+               description: 'Jenkins usernamePassword credentials ID for Docker Hub. Set it to refresh the docker login before each test run; leave empty to reuse the existing login on the slave.')
+
         // Git customization parameters
     }
 
@@ -189,12 +192,44 @@ pipeline {
                     """
                     echo ">>> Provider file ready"
 
+                    // sequoia's image pull reads Docker Hub creds only from
+                    // $DOCKER_CONFIG/config.json (falling back to $HOME/.docker/config.json) and
+                    // never calls a credential helper. The Jenkins agent's $HOME is not /root, so
+                    // DOCKER_CONFIG is pinned below. When DOCKER_CREDS_ID is set we refresh the
+                    // login into a dedicated dir that starts empty, so no credsStore/credHelpers
+                    // entry can divert the creds into a helper sequoia cannot read.
+                    def dockerCfgDir = '/root/.docker'
+                    if (params.DOCKER_CREDS_ID?.trim()) {
+                        echo ">>> Refreshing Docker Hub login..."
+                        try {
+                            withCredentials([usernamePassword(credentialsId: params.DOCKER_CREDS_ID,
+                                                              usernameVariable: 'DOCKER_USER',
+                                                              passwordVariable: 'DOCKER_PASS')]) {
+                                withEnv(['DOCKER_CONFIG=/root/.docker-sequoia']) {
+                                    sh '''
+                                        set +x
+                                        mkdir -p "$DOCKER_CONFIG"
+                                        printf '{}' > "$DOCKER_CONFIG/config.json"
+                                        echo "$DOCKER_PASS" | docker --config "$DOCKER_CONFIG" login --username "$DOCKER_USER" --password-stdin
+                                        if ! grep -q 'index.docker.io/v1/' "$DOCKER_CONFIG/config.json"; then
+                                            echo "ERROR: docker login stored no usable auth entry in $DOCKER_CONFIG/config.json"
+                                            exit 1
+                                        fi
+                                    '''
+                                }
+                            }
+                            dockerCfgDir = '/root/.docker-sequoia'
+                            echo ">>> Docker Hub login refreshed into ${dockerCfgDir}"
+                        } catch (err) {
+                            echo ">>> WARNING: docker login failed (${err.getMessage()}); falling back to ${dockerCfgDir}"
+                        }
+                    } else {
+                        echo ">>> DOCKER_CREDS_ID not set - reusing existing login at ${dockerCfgDir}"
+                    }
+
                     echo ">>> Starting sequoia tests..."
                     dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                        // sequoia reads Docker Hub creds only from $DOCKER_CONFIG/config.json,
-                        // falling back to $HOME/.docker/config.json. The Jenkins agent's $HOME is
-                        // not /root, so pin it to where `docker login` on the slave wrote them.
-                        withEnv(['DOCKER_CONFIG=/root/.docker']) {
+                        withEnv(["DOCKER_CONFIG=${dockerCfgDir}"]) {
                             sh """
                                 ./sequoia \
                                     -client ${env.SLAVE_IP}:2375 \
