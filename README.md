@@ -219,7 +219,7 @@ Automatic flavor detection based on version:
 | 7.6.x | trinity | Default |
 | 7.7.x | cypher | |
 | 8.0.x | morpheus | |
-| 8.1.x | totoro | |
+| 8.1.x, 8.5.x | totoro | |
 
 ## Security
 
