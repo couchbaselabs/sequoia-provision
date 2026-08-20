@@ -54,8 +54,8 @@ pipeline {
                description: 'Job URL of the system test log parser')
         string(name: 'LOG_PARSER_TOKEN', defaultValue: 'pipeline_trigger',
                description: "Log parser job's 'Trigger builds remotely' authentication token")
-        string(name: 'LOG_PARSER_CREDS_ID', defaultValue: '',
-               description: 'Optional Jenkins usernamePassword credentials ID (username + API token) holding Job/Cancel on the log parser job. Required to STOP running builds - the trigger token alone can only start them.')
+        string(name: 'LOG_PARSER_CREDS_ID', defaultValue: 'qeinfra_log_parser',
+               description: 'Jenkins usernamePassword credentials ID for an account with Job/Cancel on the log parser job (password or API token both work as basic auth). Required to STOP running builds - the trigger token alone can only start them. Leave empty to skip the stop step.')
 
         // Git customization parameters
     }
@@ -258,21 +258,42 @@ pipeline {
                                     exit 1
                                 fi
 
-                                # Keep the API token and trigger token out of argv (visible in ps) by
+                                LP_ROOT=$(echo "$LP_URL" | sed 's#/job/.*##')
+
+                                # Keep the password and trigger token out of argv (visible in ps) by
                                 # passing them through curl config files instead of command flags.
                                 CFG=$(mktemp)
                                 CFG_TRIG=$(mktemp)
-                                trap 'rm -f "$CFG" "$CFG_TRIG"' EXIT
-                                chmod 600 "$CFG" "$CFG_TRIG"
+                                JAR=$(mktemp)
+                                trap 'rm -f "$CFG" "$CFG_TRIG" "$JAR"' EXIT
+                                chmod 600 "$CFG" "$CFG_TRIG" "$JAR"
                                 : > "$CFG"
                                 if [ -n "$LP_USER" ]; then
-                                    printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_API_TOKEN" >> "$CFG"
+                                    printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_PASSWORD" >> "$CFG"
                                 fi
                                 cat "$CFG" > "$CFG_TRIG"
                                 printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
 
+                                # This Jenkins has CSRF protection on, and password/basic-auth POSTs are
+                                # not exempt the way API-token POSTs are. A crumb alone still 403s: it is
+                                # only accepted alongside the session it was issued to, so every call
+                                # below shares one cookie jar.
+                                CRUMB_JSON=$(curl -sS -K "$CFG" -c "$JAR" -b "$JAR" "$LP_ROOT/crumbIssuer/api/json" || true)
+                                CRUMB_FIELD=$(echo "$CRUMB_JSON" | jq -r '.crumbRequestField // empty')
+                                CRUMB=$(echo "$CRUMB_JSON" | jq -r '.crumb // empty')
+                                if [ -n "$CRUMB" ]; then
+                                    CRUMB_HDR="$CRUMB_FIELD: $CRUMB"
+                                    echo ">>> CSRF crumb acquired"
+                                else
+                                    # Harmless placeholder keeps one code path; POSTs may then be refused.
+                                    CRUMB_HDR="X-No-Crumb: 1"
+                                    echo ">>> WARNING: could not read a CSRF crumb from $LP_ROOT"
+                                fi
+
+                                RC=0
+
                                 echo ">>> Looking for running builds with master_node=$MASTER_NODE"
-                                RUNNING=$(curl -sS -K "$CFG" -G "$LP_URL/api/json" --data-urlencode 'tree=builds[number,building,actions[parameters[name,value]]]{0,300}' | jq -r --arg m "$MASTER_NODE" '.builds[] | select(.building) | select(any(.actions[]?.parameters[]?; .name == "master_node" and .value == $m)) | .number')
+                                RUNNING=$(curl -sS -K "$CFG" -b "$JAR" -c "$JAR" -G "$LP_URL/api/json" --data-urlencode 'tree=builds[number,building,actions[parameters[name,value]]]{0,300}' | jq -r --arg m "$MASTER_NODE" '.builds[] | select(.building) | select(any(.actions[]?.parameters[]?; .name == "master_node" and .value == $m)) | .number')
 
                                 if [ -z "$RUNNING" ]; then
                                     echo ">>> No running build for this master node"
@@ -281,22 +302,26 @@ pipeline {
                                         echo ">>> WARNING: LOG_PARSER_CREDS_ID is empty; stopping a build needs Job/Cancel, which the trigger token does not grant"
                                     fi
                                     for b in $RUNNING; do
-                                        CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG" -X POST "$LP_URL/$b/stop")
+                                        CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG" -b "$JAR" -c "$JAR" -H "$CRUMB_HDR" -X POST "$LP_URL/$b/stop")
                                         echo ">>> stop build #$b -> HTTP $CODE"
                                         case "$CODE" in
                                             2*|3*) ;;
-                                            *) echo "ERROR: could not stop build #$b"; exit 1 ;;
+                                            # Warn rather than exit, so a failed stop still lets the
+                                            # trigger below run; RC surfaces it as UNSTABLE afterwards.
+                                            *) echo ">>> WARNING: could not stop build #$b"; RC=1 ;;
                                         esac
                                     done
                                 fi
 
                                 echo ">>> Triggering new log parser build for $MASTER_NODE"
-                                CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG_TRIG" -X POST "$LP_URL/buildWithParameters" --data-urlencode "master_node=$MASTER_NODE")
+                                CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG_TRIG" -b "$JAR" -c "$JAR" -H "$CRUMB_HDR" -X POST "$LP_URL/buildWithParameters" --data-urlencode "master_node=$MASTER_NODE")
                                 echo ">>> trigger -> HTTP $CODE"
                                 case "$CODE" in
                                     2*|3*) echo ">>> Log parser triggered" ;;
-                                    *) echo "ERROR: trigger failed"; exit 1 ;;
+                                    *) echo ">>> ERROR: trigger failed"; RC=1 ;;
                                 esac
+
+                                exit $RC
                             '''
                         }
 
@@ -307,11 +332,11 @@ pipeline {
                                 if (params.LOG_PARSER_CREDS_ID?.trim()) {
                                     withCredentials([usernamePassword(credentialsId: params.LOG_PARSER_CREDS_ID,
                                                                       usernameVariable: 'LP_USER',
-                                                                      passwordVariable: 'LP_API_TOKEN')]) {
+                                                                      passwordVariable: 'LP_PASSWORD')]) {
                                         syncLogParser()
                                     }
                                 } else {
-                                    withEnv(['LP_USER=', 'LP_API_TOKEN=']) {
+                                    withEnv(['LP_USER=', 'LP_PASSWORD=']) {
                                         syncLogParser()
                                     }
                                 }
