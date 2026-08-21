@@ -52,8 +52,6 @@ pipeline {
                      description: 'After install, stop any running eagle eye (system_test_log_parser) build for this cluster master and start a fresh one')
         string(name: 'EMAIL_RECIPIENTS', defaultValue: '',
                description: 'Comma-separated recipients for the eagle eye run. Leave empty to keep the log parser job default.')
-        string(name: 'EAGLE_EYE_DELAY_MINS', defaultValue: '10',
-               description: 'Minutes to wait after the sequoia test starts before starting eagle eye. 0 starts it immediately.')
 
         // Git customization parameters
     }
@@ -396,12 +394,9 @@ pipeline {
                             // ./sequoia holds this stage for the whole DURATION, so eagle eye cannot
                             // simply follow it. Both run as parallel branches on this node, and this
                             // one waits so parsing starts once the cluster is genuinely under load.
-                            def delayMins = 0
-                            try {
-                                delayMins = Integer.parseInt((params.EAGLE_EYE_DELAY_MINS ?: '0').toString().trim())
-                            } catch (NumberFormatException nfe) {
-                                echo ">>> WARNING: EAGLE_EYE_DELAY_MINS is not a number; starting eagle eye now"
-                            }
+                            // 0 starts eagle eye immediately, for short runs that would
+                            // otherwise finish before the delay is over.
+                            def delayMins = 5
                             if (delayMins > 0) {
                                 echo ">>> Eagle eye starts ${delayMins} minute(s) after the test"
                                 sleep(time: delayMins, unit: 'MINUTES')
@@ -428,6 +423,10 @@ pipeline {
                         def branches = [:]
                         branches['sequoia'] = runSequoia
                         branches['eagle-eye'] = startEagleEye
+                        // failFast aborts the eagle eye branch if the test dies during the delay,
+                        // so nothing is pointed at a cluster that is no longer running a test. It
+                        // cannot fire the other way: startEagleEye swallows its own failures.
+                        branches['failFast'] = true
                         parallel(branches)
                     } else {
                         runSequoia()
@@ -437,4 +436,3 @@ pipeline {
         }
     }
 }
-
