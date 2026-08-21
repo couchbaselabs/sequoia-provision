@@ -48,6 +48,13 @@ pipeline {
         string(name: 'DOCKER_CREDS_ID', defaultValue: 'sys_test_docker_cred',
                description: 'Jenkins usernamePassword credentials ID for Docker Hub. Set it to refresh the docker login before each test run; leave empty to reuse the existing login on the slave.')
 
+        booleanParam(name: 'START_EAGLE_EYE', defaultValue: false,
+                     description: 'After install, stop any running eagle eye (system_test_log_parser) build for this cluster master and start a fresh one')
+        string(name: 'EMAIL_RECIPIENTS', defaultValue: '',
+               description: 'Comma-separated recipients for the eagle eye run. Leave empty to keep the log parser job default.')
+        string(name: 'EAGLE_EYE_DELAY_MINS', defaultValue: '10',
+               description: 'Minutes to wait after the sequoia test starts before starting eagle eye. 0 starts it immediately.')
+
         // Git customization parameters
     }
 
@@ -227,29 +234,203 @@ pipeline {
                         echo ">>> DOCKER_CREDS_ID not set - reusing existing login at ${dockerCfgDir}"
                     }
 
-                    echo ">>> Starting sequoia tests..."
-                    dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                        withEnv(["DOCKER_CONFIG=${dockerCfgDir}"]) {
-                            sh """
-                                ./sequoia \
-                                    -client ${env.SLAVE_IP}:2375 \
-                                    -provider file:provider.yml \
-                                    -test ${params.TEST_FILE} \
-                                    -scale ${params.SCALE} \
-                                    -repeat ${params.REPEAT} \
-                                    -log_level ${params.LOG_LEVEL} \
-                                    -version ${params.CB_VERSION} \
-                                    -skip_setup=${params.SKIP_SETUP} \
-                                    -skip_test=${params.SKIP_TEST} \
-                                    -skip_teardown=${params.SKIP_TEARDOWN} \
-                                    -skip_cleanup=${params.SKIP_CLEANUP} \
-                                    -continue=${params.CONTINUE} \
-                                    -collect_on_error=${params.COLLECT_ON_ERROR} \
-                                    -stop_on_error=${params.STOP_ON_ERROR} \
-                                    -duration=${params.DURATION} \
-                                    -show_topology=${params.SHOW_TOPOLOGY}
-                            """
+                    def runSequoia = {
+                        echo ">>> Starting sequoia tests..."
+                        dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
+                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}"]) {
+                                sh """
+                                    ./sequoia \
+                                        -client ${env.SLAVE_IP}:2375 \
+                                        -provider file:provider.yml \
+                                        -test ${params.TEST_FILE} \
+                                        -scale ${params.SCALE} \
+                                        -repeat ${params.REPEAT} \
+                                        -log_level ${params.LOG_LEVEL} \
+                                        -version ${params.CB_VERSION} \
+                                        -skip_setup=${params.SKIP_SETUP} \
+                                        -skip_test=${params.SKIP_TEST} \
+                                        -skip_teardown=${params.SKIP_TEARDOWN} \
+                                        -skip_cleanup=${params.SKIP_CLEANUP} \
+                                        -continue=${params.CONTINUE} \
+                                        -collect_on_error=${params.COLLECT_ON_ERROR} \
+                                        -stop_on_error=${params.STOP_ON_ERROR} \
+                                        -duration=${params.DURATION} \
+                                        -show_topology=${params.SHOW_TOPOLOGY}
+                                """
+                            }
                         }
+                    }
+
+                    // The log parser job tracks one cluster, keyed by its master_node param.
+                    // deploy.sh writes the pool's master_node=true host first into provider.yaml, and
+                    // sequoia treats the first entry as its orchestrator (lib/template.go Orchestrator),
+                    // so that IP is the cluster identity both jobs agree on.
+                    if (params.START_EAGLE_EYE) {
+                        // Deliberately not a build parameter: the same requests carry the
+                        // jenkins_qe_infra_user credentials, and curl applies them to whatever host
+                        // the URL names, so a caller-supplied value could redirect them anywhere.
+                        def logParserUrl = 'http://172.23.121.80/job/system_test_log_parser'
+
+                        def masterNode = sh(
+                            script: "grep -m1 -E '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+' /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml | tr -d '[:space:]'",
+                            returnStdout: true).trim()
+                        echo ">>> Cluster master node: ${masterNode}"
+
+                        def syncLogParser = {
+                            sh '''
+                                set +x
+                                if [ -z "$MASTER_NODE" ]; then
+                                    echo "ERROR: no master node found in provider.yml"
+                                    exit 1
+                                fi
+                                if ! command -v jq >/dev/null 2>&1; then
+                                    echo "ERROR: jq is required to read the log parser build list"
+                                    exit 1
+                                fi
+
+                                LP_ROOT=$(echo "$LP_URL" | sed 's#/job/.*##')
+
+                                # Keep the password and trigger token out of argv (visible in ps) by
+                                # passing them through curl config files instead of command flags.
+                                CFG=$(mktemp)
+                                CFG_TRIG=$(mktemp)
+                                JAR=$(mktemp)
+                                HDRS=$(mktemp)
+                                MAIL=$(mktemp)
+                                trap 'rm -f "$CFG" "$CFG_TRIG" "$JAR" "$HDRS" "$MAIL"' EXIT
+                                chmod 600 "$CFG" "$CFG_TRIG" "$JAR" "$HDRS" "$MAIL"
+                                : > "$CFG"
+                                printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_PASSWORD" >> "$CFG"
+                                # Bound every request. An endpoint that accepts the connection and then
+                                # stalls would otherwise hold this branch until the pipeline is aborted.
+                                printf 'connect-timeout = 15\\nmax-time = 60\\n' >> "$CFG"
+                                cat "$CFG" > "$CFG_TRIG"
+                                printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
+                                # Recipients come from a build parameter, so the value never reaches
+                                # curl-config syntax: it goes into its own file and the config points at
+                                # the file, leaving nothing to quote, escape, or inject through.
+                                if [ -n "$EMAIL_RECIPIENTS" ]; then
+                                    printf '%s' "$EMAIL_RECIPIENTS" > "$MAIL"
+                                    printf 'data-urlencode = "email_recipients@%s"\\n' "$MAIL" >> "$CFG_TRIG"
+                                    echo ">>> Eagle eye recipients: $EMAIL_RECIPIENTS"
+                                else
+                                    echo ">>> Eagle eye recipients: job default"
+                                fi
+
+                                # This Jenkins has CSRF protection on, and password/basic-auth POSTs are
+                                # not exempt the way API-token POSTs are. A crumb alone still 403s: it is
+                                # only accepted alongside the session it was issued to, so every call
+                                # below shares one cookie jar.
+                                CRUMB_JSON=$(curl -sS -K "$CFG" -c "$JAR" -b "$JAR" "$LP_ROOT/crumbIssuer/api/json" || true)
+                                CRUMB_FIELD=$(echo "$CRUMB_JSON" | jq -r '.crumbRequestField // empty')
+                                CRUMB=$(echo "$CRUMB_JSON" | jq -r '.crumb // empty')
+                                if [ -n "$CRUMB" ]; then
+                                    CRUMB_HDR="$CRUMB_FIELD: $CRUMB"
+                                    echo ">>> CSRF crumb acquired"
+                                else
+                                    # Harmless placeholder keeps one code path; POSTs may then be refused.
+                                    CRUMB_HDR="X-No-Crumb: 1"
+                                    echo ">>> WARNING: could not read a CSRF crumb from $LP_ROOT"
+                                fi
+
+                                RC=0
+
+                                echo ">>> Looking for running builds with master_node=$MASTER_NODE"
+                                RUNNING=$(curl -sS -K "$CFG" -b "$JAR" -c "$JAR" -G "$LP_URL/api/json" --data-urlencode 'tree=builds[number,building,actions[parameters[name,value]]]{0,300}' | jq -r --arg m "$MASTER_NODE" '.builds[] | select(.building) | select(any(.actions[]?.parameters[]?; .name == "master_node" and .value == $m)) | .number')
+
+                                if [ -z "$RUNNING" ]; then
+                                    echo ">>> No running build for this master node"
+                                else
+                                    for b in $RUNNING; do
+                                        CODE=$(curl -sS -o /dev/null -w '%{http_code}' -K "$CFG" -b "$JAR" -c "$JAR" -H "$CRUMB_HDR" -X POST "$LP_URL/$b/stop")
+                                        echo ">>> stop build #$b -> HTTP $CODE ($LP_URL/$b/)"
+                                        case "$CODE" in
+                                            2*|3*) ;;
+                                            # Warn rather than exit, so a failed stop still lets the
+                                            # trigger below run; RC surfaces it as UNSTABLE afterwards.
+                                            *) echo ">>> WARNING: could not stop build #$b"; RC=1 ;;
+                                        esac
+                                    done
+                                fi
+
+                                echo ">>> Starting eagle eye for $MASTER_NODE"
+                                CODE=$(curl -sS -o /dev/null -D "$HDRS" -w '%{http_code}' -K "$CFG_TRIG" -b "$JAR" -c "$JAR" -H "$CRUMB_HDR" -X POST "$LP_URL/buildWithParameters" --data-urlencode "master_node=$MASTER_NODE")
+                                echo ">>> trigger -> HTTP $CODE"
+                                case "$CODE" in
+                                    2*|3*) echo ">>> Eagle eye started" ;;
+                                    *) echo ">>> ERROR: trigger failed"; RC=1; exit $RC ;;
+                                esac
+
+                                # buildWithParameters answers with the queue item, not the build. The
+                                # build number only exists once the queue item is scheduled, so poll it
+                                # briefly to turn the queue link into the real job link.
+                                QUEUE_URL=$(awk 'tolower($1) == "location:" { gsub(/\\r/, "", $2); print $2 }' "$HDRS" | tail -1)
+                                if [ -z "$QUEUE_URL" ]; then
+                                    echo ">>> Eagle eye job: $LP_URL (no queue location returned)"
+                                    exit $RC
+                                fi
+
+                                BUILD_URL=""
+                                i=0
+                                while [ $i -lt 20 ]; do
+                                    BUILD_URL=$(curl -sS -K "$CFG" -b "$JAR" -c "$JAR" "${QUEUE_URL}api/json" | jq -r '.executable.url // empty')
+                                    if [ -n "$BUILD_URL" ]; then
+                                        break
+                                    fi
+                                    i=$((i + 1))
+                                    sleep 3
+                                done
+
+                                if [ -n "$BUILD_URL" ]; then
+                                    echo ">>> Eagle eye job link: $BUILD_URL"
+                                    echo ">>> Eagle eye console:  ${BUILD_URL}console"
+                                else
+                                    echo ">>> Eagle eye still queued, link: $QUEUE_URL"
+                                fi
+
+                                exit $RC
+                            '''
+                        }
+
+                        def startEagleEye = {
+                            // ./sequoia holds this stage for the whole DURATION, so eagle eye cannot
+                            // simply follow it. Both run as parallel branches on this node, and this
+                            // one waits so parsing starts once the cluster is genuinely under load.
+                            def delayMins = 0
+                            try {
+                                delayMins = Integer.parseInt((params.EAGLE_EYE_DELAY_MINS ?: '0').toString().trim())
+                            } catch (NumberFormatException nfe) {
+                                echo ">>> WARNING: EAGLE_EYE_DELAY_MINS is not a number; starting eagle eye now"
+                            }
+                            if (delayMins > 0) {
+                                echo ">>> Eagle eye starts ${delayMins} minute(s) after the test"
+                                sleep(time: delayMins, unit: 'MINUTES')
+                            }
+                            try {
+                                withEnv(["LP_URL=${logParserUrl}",
+                                         "EMAIL_RECIPIENTS=${params.EMAIL_RECIPIENTS}",
+                                         "MASTER_NODE=${masterNode}"]) {
+                                    withCredentials([usernamePassword(credentialsId: 'jenkins_qe_infra_user',
+                                                                      usernameVariable: 'LP_USER',
+                                                                      passwordVariable: 'LP_PASSWORD'),
+                                                     string(credentialsId: 'eagle_eye_trigger_token',
+                                                            variable: 'LP_TOKEN')]) {
+                                        syncLogParser()
+                                    }
+                                }
+                            } catch (err) {
+                                // A longevity run must not die because log parsing could not be started.
+                                echo ">>> WARNING: eagle eye sync failed (${err.getMessage()})"
+                                currentBuild.result = 'UNSTABLE'
+                            }
+                        }
+
+                        def branches = [:]
+                        branches['sequoia'] = runSequoia
+                        branches['eagle-eye'] = startEagleEye
+                        parallel(branches)
+                    } else {
+                        runSequoia()
                     }
                 }
             }
