@@ -14,7 +14,7 @@ pipeline {
                description: 'Select which component or longevity cluster to deploy and run tests for')
 
         booleanParam(name: 'SKIP_INSTALL', defaultValue: false, description: 'Skip deploy/install step')
-        string(name: 'CB_VERSION', defaultValue: '8.1.0', description: 'Couchbase version')
+        string(name: 'CB_VERSION', defaultValue: '8.5.0', description: 'Couchbase version')
         string(name: 'CB_BUILD', defaultValue: '1130', description: 'Couchbase build number')
         string(name: 'TEST_FILE', defaultValue: 'tests/2i/7.6/test_7_6_gsi_system_test.yml -scope tests/2i/neo/scope_neo_plasma_idx_dgm.yml', description: 'Test file path')
         string(name: 'SGW_VERSION', defaultValue: '3.2.0', description: 'Sync Gateway version')
