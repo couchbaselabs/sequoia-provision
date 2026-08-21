@@ -54,10 +54,6 @@ pipeline {
                description: 'Comma-separated recipients for the eagle eye run. Leave empty to keep the log parser job default.')
         string(name: 'EAGLE_EYE_DELAY_MINS', defaultValue: '10',
                description: 'Minutes to wait after the sequoia test starts before starting eagle eye. 0 starts it immediately.')
-        string(name: 'LOG_PARSER_URL', defaultValue: 'http://172.23.121.80/job/system_test_log_parser',
-               description: 'Job URL of the system test log parser')
-        string(name: 'LOG_PARSER_TOKEN', defaultValue: 'pipeline_trigger',
-               description: "Log parser job's 'Trigger builds remotely' authentication token")
 
         // Git customization parameters
     }
@@ -270,6 +266,11 @@ pipeline {
                     // sequoia treats the first entry as its orchestrator (lib/template.go Orchestrator),
                     // so that IP is the cluster identity both jobs agree on.
                     if (params.START_EAGLE_EYE) {
+                        // Deliberately not a build parameter: the same requests carry the
+                        // jenkins_qe_infra_user credentials, and curl applies them to whatever host
+                        // the URL names, so a caller-supplied value could redirect them anywhere.
+                        def logParserUrl = 'http://172.23.121.80/job/system_test_log_parser'
+
                         def masterNode = sh(
                             script: "grep -m1 -E '^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+' /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml | tr -d '[:space:]'",
                             returnStdout: true).trim()
@@ -295,14 +296,22 @@ pipeline {
                                 CFG_TRIG=$(mktemp)
                                 JAR=$(mktemp)
                                 HDRS=$(mktemp)
-                                trap 'rm -f "$CFG" "$CFG_TRIG" "$JAR" "$HDRS"' EXIT
-                                chmod 600 "$CFG" "$CFG_TRIG" "$JAR" "$HDRS"
+                                MAIL=$(mktemp)
+                                trap 'rm -f "$CFG" "$CFG_TRIG" "$JAR" "$HDRS" "$MAIL"' EXIT
+                                chmod 600 "$CFG" "$CFG_TRIG" "$JAR" "$HDRS" "$MAIL"
                                 : > "$CFG"
                                 printf 'user = "%s:%s"\\n' "$LP_USER" "$LP_PASSWORD" >> "$CFG"
+                                # Bound every request. An endpoint that accepts the connection and then
+                                # stalls would otherwise hold this branch until the pipeline is aborted.
+                                printf 'connect-timeout = 15\\nmax-time = 60\\n' >> "$CFG"
                                 cat "$CFG" > "$CFG_TRIG"
                                 printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
+                                # Recipients come from a build parameter, so the value never reaches
+                                # curl-config syntax: it goes into its own file and the config points at
+                                # the file, leaving nothing to quote, escape, or inject through.
                                 if [ -n "$EMAIL_RECIPIENTS" ]; then
-                                    printf 'data-urlencode = "email_recipients=%s"\\n' "$EMAIL_RECIPIENTS" >> "$CFG_TRIG"
+                                    printf '%s' "$EMAIL_RECIPIENTS" > "$MAIL"
+                                    printf 'data-urlencode = "email_recipients@%s"\\n' "$MAIL" >> "$CFG_TRIG"
                                     echo ">>> Eagle eye recipients: $EMAIL_RECIPIENTS"
                                 else
                                     echo ">>> Eagle eye recipients: job default"
@@ -398,13 +407,14 @@ pipeline {
                                 sleep(time: delayMins, unit: 'MINUTES')
                             }
                             try {
-                                withEnv(["LP_URL=${params.LOG_PARSER_URL}",
-                                         "LP_TOKEN=${params.LOG_PARSER_TOKEN}",
+                                withEnv(["LP_URL=${logParserUrl}",
                                          "EMAIL_RECIPIENTS=${params.EMAIL_RECIPIENTS}",
                                          "MASTER_NODE=${masterNode}"]) {
                                     withCredentials([usernamePassword(credentialsId: 'jenkins_qe_infra_user',
                                                                       usernameVariable: 'LP_USER',
-                                                                      passwordVariable: 'LP_PASSWORD')]) {
+                                                                      passwordVariable: 'LP_PASSWORD'),
+                                                     string(credentialsId: 'eagle_eye_trigger_token',
+                                                            variable: 'LP_TOKEN')]) {
                                         syncLogParser()
                                     }
                                 }
