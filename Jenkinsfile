@@ -288,8 +288,8 @@ pipeline {
 
                                 LP_ROOT=$(echo "$LP_URL" | sed 's#/job/.*##')
 
-                                # Keep the password and trigger token out of argv (visible in ps) by
-                                # passing them through curl config files instead of command flags.
+                                # Keep the password out of argv (visible in ps) by passing it through
+                                # curl config files instead of command flags.
                                 CFG=$(mktemp)
                                 CFG_TRIG=$(mktemp)
                                 JAR=$(mktemp)
@@ -302,8 +302,9 @@ pipeline {
                                 # Bound every request. An endpoint that accepts the connection and then
                                 # stalls would otherwise hold this branch until the pipeline is aborted.
                                 printf 'connect-timeout = 15\\nmax-time = 60\\n' >> "$CFG"
+                                # No build token: the jenkins_qe_infra_user login in $CFG authorizes
+                                # the POST, so $CFG_TRIG only adds the trigger's own parameters.
                                 cat "$CFG" > "$CFG_TRIG"
-                                printf 'data-urlencode = "token=%s"\\n' "$LP_TOKEN" >> "$CFG_TRIG"
                                 # Recipients come from a build parameter, so the value never reaches
                                 # curl-config syntax: it goes into its own file and the config points at
                                 # the file, leaving nothing to quote, escape, or inject through.
@@ -402,14 +403,15 @@ pipeline {
                                 sleep(time: delayMins, unit: 'MINUTES')
                             }
                             try {
+                                // Every call authenticates as jenkins_qe_infra_user; no build token
+                                // is used, so the job needs Build permission for that user rather than
+                                // "Trigger builds remotely".
                                 withEnv(["LP_URL=${logParserUrl}",
                                          "EMAIL_RECIPIENTS=${params.EMAIL_RECIPIENTS}",
                                          "MASTER_NODE=${masterNode}"]) {
                                     withCredentials([usernamePassword(credentialsId: 'jenkins_qe_infra_user',
                                                                       usernameVariable: 'LP_USER',
-                                                                      passwordVariable: 'LP_PASSWORD'),
-                                                     string(credentialsId: 'eagle_eye_trigger_token',
-                                                            variable: 'LP_TOKEN')]) {
+                                                                      passwordVariable: 'LP_PASSWORD')]) {
                                         syncLogParser()
                                     }
                                 }
