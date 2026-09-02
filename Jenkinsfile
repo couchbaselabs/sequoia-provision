@@ -37,11 +37,11 @@ pipeline {
         booleanParam(name: 'SHOW_TOPOLOGY', defaultValue: true, description: 'Show test topology')
         booleanParam(name: 'COLLECT_ON_ERROR', defaultValue: false, description: 'Collect data on error')
         booleanParam(name: 'STOP_ON_ERROR', defaultValue: false, description: 'Stop test on error')
-        booleanParam(name: 'CONTINUE', defaultValue: false, description: 'Continue after error')
         booleanParam(name: 'SKIP_CLEANUP', defaultValue: false, description: 'Skip cleanup phase')
         booleanParam(name: 'SKIP_TEARDOWN', defaultValue: true, description: 'Skip teardown phase')
         booleanParam(name: 'SKIP_TEST', defaultValue: false, description: 'Skip test execution')
-        booleanParam(name: 'SKIP_SETUP', defaultValue: false, description: 'Skip setup phase')
+        booleanParam(name: 'SKIP_SETUP', defaultValue: false,
+                     description: 'Skip scope setup (cluster/bucket provisioning). Sequoia also treats this as a resumed run and skips one-time test setup: initial data load, collection creation, xdcr-setup, n2n encryption.')
 
         string(name: 'LOG_LEVEL', defaultValue: '0', description: 'Logging level (0–5)')
 
@@ -249,7 +249,6 @@ pipeline {
                                         -skip_test=${params.SKIP_TEST} \
                                         -skip_teardown=${params.SKIP_TEARDOWN} \
                                         -skip_cleanup=${params.SKIP_CLEANUP} \
-                                        -continue=${params.CONTINUE} \
                                         -collect_on_error=${params.COLLECT_ON_ERROR} \
                                         -stop_on_error=${params.STOP_ON_ERROR} \
                                         -duration=${params.DURATION} \
