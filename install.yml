@@ -19,8 +19,15 @@
     shell: "umount -a -t nfs,nfs4 -f -l"
     ignore_errors: True
 
-  - name: set vm.swappiness to 0
-    shell: "echo 0 > /proc/sys/vm/swappiness"
+  - name: set vm.swappiness to 1 (runtime)
+    shell: "echo 1 > /proc/sys/vm/swappiness"
+
+  - name: persist vm.swappiness = 1 in /etc/sysctl.conf
+    lineinfile:
+      path: /etc/sysctl.conf
+      regexp: '^\s*vm\.swappiness\s*='
+      line: 'vm.swappiness = 1'
+      create: yes
 
   - name: disable thp
     shell: "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
