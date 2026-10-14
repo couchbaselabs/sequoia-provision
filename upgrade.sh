@@ -5,6 +5,8 @@
 #   online  - rolling swap rebalance: a spare node with the new version is swapped in for one cluster node at
 #             a time (same services and server group); the node swapped out is freshly installed with the new
 #             version (install.yml) and becomes the next spare, until every node runs the new version.
+#             Order follows the recommended path: all KV (data) nodes first (orchestrator last among them), then
+#             the remaining query/index nodes one at a time in random order (--swap-seed replays an order).
 #             Spares come from --spare-hosts or, when it is empty, from the provider hosts that are not cluster
 #             members (e.g. the 12th host when a test uses 11), so the provider file stays the same size.
 #   offline - stop Couchbase on every node, dpkg -i the new package over the existing one, start (upgrade.yml)
@@ -35,6 +37,7 @@ REBALANCE_TIMEOUT=14400
 HEALTH_TIMEOUT=1800
 REINSTALL_INACTIVE=true
 DRY_RUN=false
+SWAP_SEED=""
 HOSTS_FILE="ansible/hosts_upgrade"
 GROUP_NAME="upgrade_targets"
 
@@ -58,6 +61,7 @@ Required:
 Online mode:
     --spare-hosts "IP IP"         Spare node(s) to swap in; installed with the new version first.
                                   Default: the provider hosts that are not cluster members
+    --swap-seed N                 Seed for the random query/index swap order (printed every run; reuse to replay)
 
 Options:
     --provider-file FILE          Provider file written by deploy.sh (default: provider.yaml)
@@ -101,6 +105,7 @@ while [[ $# -gt 0 ]]; do
         --health-timeout) HEALTH_TIMEOUT="$2"; shift 2 ;;
         --skip-inactive) REINSTALL_INACTIVE=false; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
+        --swap-seed) SWAP_SEED="$2"; shift 2 ;;
         -h|--help) show_help ;;
         *)
             echo -e "${RED}Error: Unknown option: $1${NC}"
@@ -163,6 +168,23 @@ cluster_members() {
 
 member_field() {  # member_field ORCH IP COLUMN
     cluster_members "$1" | awk -F'\t' -v ip="$2" -v col="$3" '$1 == ip {print $col}'
+}
+
+# Data and index paths a node uses ("<data>\t<index>"), from its own /nodes/self
+node_paths() {
+    rest_get "$1" /nodes/self | jq -r '[.storage.hdd[0].path, .storage.hdd[0].index_path] | @tsv'
+}
+
+# A freshly installed node is uninitialized and would keep the default paths under /opt (root disk); give it the
+# same data/index paths as the node it replaces before it joins (what couchbase-cli node-init does)
+init_node_paths() {
+    local node=$1 data=$2 index=$3
+    rest_post "$node" /nodes/self/controller/settings --data-urlencode "path=$data" \
+        --data-urlencode "index_path=$index" > /dev/null || die "Setting data/index paths on $node failed"
+    local now
+    now=$(node_paths "$node")
+    [[ "$now" == "$data"$'\t'"$index" ]] || die "$node paths are '$now' after init, expected '$data' / '$index'"
+    log "$node data path $data, index path $index"
 }
 
 wait_for_rebalance() {
@@ -286,10 +308,33 @@ echo "Inactive provider hosts: ${INACTIVE[*]:-none}"
 [[ "$MODE" == "online" ]] && echo "Spare hosts: ${SPARES[*]} (from ${SPARE_SOURCE})"
 echo ""
 
+# Online swap order (recommended upgrade path): every node running kv first, with the orchestrator last among
+# them, then the query/index nodes one at a time in random order.
+SWAP_ORDER=()
+if [[ "$MODE" == "online" ]]; then
+    KV_NODES=()
+    OTHER_NODES=()
+    for ip in "${MEMBERS[@]:1}" "${MEMBERS[0]}"; do
+        svc=$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")
+        if [[ ",$svc," == *",kv,"* ]]; then KV_NODES+=("$ip"); else OTHER_NODES+=("$ip"); fi
+    done
+    [[ -n "$SWAP_SEED" ]] || SWAP_SEED=$RANDOM
+    RANDOM=$SWAP_SEED
+    for ((i = ${#OTHER_NODES[@]} - 1; i > 0; i--)); do
+        j=$((RANDOM % (i + 1)))
+        tmp=${OTHER_NODES[$i]}; OTHER_NODES[$i]=${OTHER_NODES[$j]}; OTHER_NODES[$j]=$tmp
+    done
+    SWAP_ORDER=("${KV_NODES[@]}" "${OTHER_NODES[@]}")
+    echo "Swap order (KV first, then query/index in random order, --swap-seed $SWAP_SEED):"
+    for ip in "${SWAP_ORDER[@]}"; do
+        echo "  $ip ($(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members"))"
+    done
+    echo ""
+fi
+
 if [[ "$DRY_RUN" == true ]]; then
     if [[ "$MODE" == "online" ]]; then
-        echo "Plan: install ${CB_VERSION} on spares, then swap (orchestrator ${MEMBERS[0]} last):"
-        for ip in "${MEMBERS[@]:1}" "${MEMBERS[0]}"; do echo "  swap out $ip"; done
+        echo "Plan: install ${CB_VERSION} on spares ${SPARES[*]}, then swap in the order above"
     else
         echo "Plan: stop, dpkg -i, start on ${MEMBERS[*]}"
     fi
@@ -314,8 +359,6 @@ else
     fresh_install "${to_install[@]}"
 
     FINAL_MEMBERS=("${MEMBERS[@]}")
-    # Orchestrator (provider's first host) goes last so REST keeps a stable target for as long as possible
-    SWAP_ORDER=("${MEMBERS[@]:1}" "${MEMBERS[0]}")
     step=0
     for old in "${SWAP_ORDER[@]}"; do
         step=$((step + 1))
@@ -334,6 +377,8 @@ else
         [[ -n "$group_uri" ]] || group_uri="/controller/addNode"
 
         echo -e "${YELLOW}Swap $step/${#SWAP_ORDER[@]}: $old ($services) -> $new${NC}"
+        old_paths=$(node_paths "$old") || die "Cannot read data/index paths of $old"
+        init_node_paths "$new" "$(cut -f1 <<< "$old_paths")" "$(cut -f2 <<< "$old_paths")"
         if [[ "$ADD_NODE_SCHEME" == "https" ]]; then add_host="https://$new"; else add_host="$new"; fi
         rest_post "$orch" "$group_uri" --data-urlencode "hostname=$add_host" \
             --data-urlencode "user=$REST_USER" --data-urlencode "password=$REST_PASSWORD" \

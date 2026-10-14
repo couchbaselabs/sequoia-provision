@@ -244,6 +244,9 @@ pipeline {
                         echo ">>> DOCKER_CREDS_ID not set - reusing existing login at ${dockerCfgDir}"
                     }
 
+                    // An upgrade run's pre and post tests must each run exactly once (a second cycle would redo the
+                    // capture or repeat the post-upgrade rebalances), so REPEAT only applies when UPGRADE_MODE=none.
+                    def repeat = params.UPGRADE_MODE == 'none' ? params.REPEAT : '0'
                     def runSequoiaWith = { String testFile, String version, boolean skipSetup ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
@@ -254,7 +257,7 @@ pipeline {
                                         -provider file:provider.yml \
                                         -test ${testFile} \
                                         -scale ${params.SCALE} \
-                                        -repeat ${params.REPEAT} \
+                                        -repeat ${repeat} \
                                         -log_level ${params.LOG_LEVEL} \
                                         -version ${version} \
                                         -skip_setup=${skipSetup} \
