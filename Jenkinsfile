@@ -247,7 +247,7 @@ pipeline {
                     // An upgrade run's pre and post tests must each run exactly once (a second cycle would redo the
                     // capture or repeat the post-upgrade rebalances), so REPEAT only applies when UPGRADE_MODE=none.
                     def repeat = params.UPGRADE_MODE == 'none' ? params.REPEAT : '0'
-                    def runSequoiaWith = { String testFile, String version, boolean skipSetup ->
+                    def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
                             withEnv(["DOCKER_CONFIG=${dockerCfgDir}"]) {
@@ -263,7 +263,7 @@ pipeline {
                                         -skip_setup=${skipSetup} \
                                         -skip_test=${params.SKIP_TEST} \
                                         -skip_teardown=${params.SKIP_TEARDOWN} \
-                                        -skip_cleanup=${params.SKIP_CLEANUP} \
+                                        -skip_cleanup=${skipCleanup} \
                                         -collect_on_error=${params.COLLECT_ON_ERROR} \
                                         -stop_on_error=${params.STOP_ON_ERROR} \
                                         -duration=${params.DURATION} \
@@ -272,7 +272,11 @@ pipeline {
                             }
                         }
                     }
-                    def runSequoia = { runSequoiaWith(params.TEST_FILE, params.CB_VERSION, params.SKIP_SETUP) }
+                    // For an upgrade the pre-upgrade test's background workload (mutations + queries) must keep
+                    // running through the upgrade, so its containers are not cleaned up when that run ends; the
+                    // post-upgrade test removes them as its first step.
+                    def runSequoia = { runSequoiaWith(params.TEST_FILE, params.CB_VERSION, params.SKIP_SETUP,
+                                                      params.UPGRADE_MODE != 'none' || params.SKIP_CLEANUP) }
 
                     // The log parser job tracks one cluster, keyed by its master_node param.
                     // deploy.sh writes the pool's master_node=true host first into provider.yaml, and
@@ -479,7 +483,7 @@ pipeline {
                         }
                         echo ">>> Upgrade completed; refreshing provider file with post-upgrade membership"
                         sh "cp /root/sequoia-provision/provider.yaml /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml"
-                        runSequoiaWith(params.POST_UPGRADE_TEST_FILE, params.UPGRADE_CB_VERSION, true)
+                        runSequoiaWith(params.POST_UPGRADE_TEST_FILE, params.UPGRADE_CB_VERSION, true, params.SKIP_CLEANUP)
                     }
                 }
             }
