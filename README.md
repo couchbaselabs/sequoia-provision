@@ -414,7 +414,8 @@ deploy_manual:
 
 # Online: rolling swap rebalance through a spare node (installed with the new version first).
 # Each swapped-out node is freshly installed with the new version and becomes the next spare.
-./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130 --spare-hosts "172.23.105.50"
+# Spare = --spare-hosts, or by default the provider hosts that are not cluster members.
+./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130
 
 # Show the plan only
 ./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130 --spare-hosts "172.23.105.50" --dry-run

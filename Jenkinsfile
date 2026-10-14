@@ -19,11 +19,11 @@ pipeline {
         string(name: 'TEST_FILE', defaultValue: 'tests/2i/7.6/test_7_6_gsi_system_test.yml -scope tests/2i/neo/scope_neo_plasma_idx_dgm.yml', description: 'Test file path')
 
         choice(name: 'UPGRADE_MODE', choices: ['none', 'online', 'offline'],
-               description: 'none: just run TEST_FILE. online: rolling swap rebalance through UPGRADE_SPARE_HOSTS. offline: stop, dpkg -i, start on every node. With online/offline, TEST_FILE is the pre-upgrade test (CB_VERSION/CB_BUILD), e.g. tests/upgrade/gsi_query/test_gsi_query_pre_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml, and must finish within DURATION; then upgrade.sh runs and POST_UPGRADE_TEST_FILE runs with -skip_setup.')
+               description: 'none: just run TEST_FILE. online: rolling swap rebalance through a spare host (UPGRADE_SPARE_HOSTS, or the pool host outside the cluster). offline: stop, dpkg -i, start on every node. With online/offline, TEST_FILE is the pre-upgrade test (CB_VERSION/CB_BUILD), e.g. tests/upgrade/gsi_query/test_gsi_query_pre_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml, and must finish within DURATION; then upgrade.sh runs and POST_UPGRADE_TEST_FILE runs with -skip_setup.')
         string(name: 'UPGRADE_CB_VERSION', defaultValue: '', description: 'Couchbase version to upgrade to')
         string(name: 'UPGRADE_CB_BUILD', defaultValue: '', description: 'Couchbase build number to upgrade to')
         string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the upgrade version (overrides version/build)')
-        string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Space-separated spare node IPs for online upgrade (not part of the pool provider file)')
+        string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Optional spare node IPs for online upgrade. Empty: the pool hosts the test keeps out of the cluster are used (e.g. the 12th host of component7 when the scope uses 11)')
         string(name: 'POST_UPGRADE_TEST_FILE', defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_post_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Test (and -scope) run after the upgrade with -skip_setup; use the same scope as TEST_FILE')
         string(name: 'SGW_VERSION', defaultValue: '3.2.0', description: 'Sync Gateway version')
@@ -451,9 +451,6 @@ pipeline {
                     if (params.UPGRADE_MODE != 'none') {
                         if (!params.UPGRADE_CB_VERSION?.trim() || !(params.UPGRADE_CB_BUILD?.trim() || params.UPGRADE_CB_INSTALL_URL?.trim())) {
                             error "UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required for UPGRADE_MODE=${params.UPGRADE_MODE}"
-                        }
-                        if (params.UPGRADE_MODE == 'online' && !params.UPGRADE_SPARE_HOSTS?.trim()) {
-                            error "UPGRADE_SPARE_HOSTS is required for UPGRADE_MODE=online"
                         }
                         currentBuild.description += " | Upgrade (${params.UPGRADE_MODE}): ${params.UPGRADE_CB_VERSION} - ${params.UPGRADE_CB_BUILD}"
                         echo ">>> Starting ${params.UPGRADE_MODE} upgrade to ${params.UPGRADE_CB_VERSION}-${params.UPGRADE_CB_BUILD}..."

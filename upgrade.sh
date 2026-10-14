@@ -4,7 +4,9 @@
 #
 #   online  - rolling swap rebalance: a spare node with the new version is swapped in for one cluster node at
 #             a time (same services and server group); the node swapped out is freshly installed with the new
-#             version (install.yml) and becomes the next spare, until every node runs the new version
+#             version (install.yml) and becomes the next spare, until every node runs the new version.
+#             Spares come from --spare-hosts or, when it is empty, from the provider hosts that are not cluster
+#             members (e.g. the 12th host when a test uses 11), so the provider file stays the same size.
 #   offline - stop Couchbase on every node, dpkg -i the new package over the existing one, start (upgrade.yml)
 #
 # Hosts in the provider file that are not cluster members (sequoia's inactive nodes) are freshly installed with
@@ -54,7 +56,8 @@ Required:
     --cb-build BUILD              Build number to upgrade to
 
 Online mode:
-    --spare-hosts "IP IP"         Spare node(s) to swap in; installed with the new version first (required)
+    --spare-hosts "IP IP"         Spare node(s) to swap in; installed with the new version first.
+                                  Default: the provider hosts that are not cluster members
 
 Options:
     --provider-file FILE          Provider file written by deploy.sh (default: provider.yaml)
@@ -75,6 +78,7 @@ Environment:
 
 Examples:
     $0 --mode offline --cb-version 8.5.0 --cb-build 1130
+    $0 --mode online --cb-version 8.5.0 --cb-build 1130
     $0 --mode online --cb-version 8.5.0 --cb-build 1130 --spare-hosts "172.23.105.50"
 EOF
     exit 0
@@ -113,7 +117,6 @@ log() { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $*"; }
 [[ -n "$CB_VERSION" && -n "$CB_BUILD" ]] || [[ -n "$CB_INSTALL_URL" && -n "$CB_VERSION" ]] \
     || die "--cb-version and --cb-build (or --cb-install-url with --cb-version) are required"
 [[ -f "$PROVIDER_FILE" ]] || die "Provider file $PROVIDER_FILE not found (run deploy.sh first)"
-[[ "$MODE" == "offline" || -n "$SPARE_HOSTS" ]] || die "--spare-hosts is required for --mode online"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 command -v ansible-playbook >/dev/null 2>&1 || die "ansible-playbook is required"
 
@@ -265,6 +268,14 @@ read -r -a SPARES <<< "$SPARE_HOSTS"
 for ip in "${SPARES[@]}"; do
     [[ " ${MEMBERS[*]} " == *" $ip "* ]] && die "Spare $ip is already a cluster member"
 done
+SPARE_SOURCE="--spare-hosts"
+if [[ "$MODE" == "online" && ${#SPARES[@]} -eq 0 ]]; then
+    # No explicit spares: use the provider hosts the test keeps out of the cluster
+    SPARES=("${INACTIVE[@]}")
+    INACTIVE=()
+    SPARE_SOURCE="provider hosts not in the cluster"
+    (( ${#SPARES[@]} > 0 )) || die "Online upgrade needs a spare: no provider host is outside the cluster and --spare-hosts is empty"
+fi
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}   Couchbase ${MODE} upgrade -> ${CB_VERSION}-${CB_BUILD} (${CB_FLAVOR})${NC}"
@@ -272,7 +283,7 @@ echo -e "${BLUE}========================================${NC}"
 echo "Cluster members (version / services):"
 awk -F'\t' '{printf "  %-16s %-24s %s\n", $1, $4, $3}' <<< "$members"
 echo "Inactive provider hosts: ${INACTIVE[*]:-none}"
-[[ "$MODE" == "online" ]] && echo "Spare hosts: ${SPARES[*]}"
+[[ "$MODE" == "online" ]] && echo "Spare hosts: ${SPARES[*]} (from ${SPARE_SOURCE})"
 echo ""
 
 if [[ "$DRY_RUN" == true ]]; then
