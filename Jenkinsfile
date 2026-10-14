@@ -247,6 +247,9 @@ pipeline {
                     // An upgrade run's pre and post tests must each run exactly once (a second cycle would redo the
                     // capture or repeat the post-upgrade rebalances), so REPEAT only applies when UPGRADE_MODE=none.
                     def repeat = params.UPGRADE_MODE == 'none' ? params.REPEAT : '0'
+                    // sequoia treats -repeat 0 with -duration > 0 as "repeat until the duration expires", so an
+                    // upgrade run also drops the duration: each test runs exactly one cycle.
+                    def duration = params.UPGRADE_MODE == 'none' ? params.DURATION : '0'
                     def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
@@ -266,7 +269,7 @@ pipeline {
                                         -skip_cleanup=${skipCleanup} \
                                         -collect_on_error=${params.COLLECT_ON_ERROR} \
                                         -stop_on_error=${params.STOP_ON_ERROR} \
-                                        -duration=${params.DURATION} \
+                                        -duration=${duration} \
                                         -show_topology=${params.SHOW_TOPOLOGY}
                                 """
                             }
