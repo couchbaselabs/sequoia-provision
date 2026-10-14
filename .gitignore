@@ -13,3 +13,7 @@ provider.yaml
 
 
 
+
+# Upgrade (upgrade.sh)
+ansible/hosts_upgrade
+provider.yaml.pre_upgrade
