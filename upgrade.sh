@@ -5,16 +5,18 @@
 #   online  - rolling swap rebalance: a spare node with the new version is swapped in for one cluster node at
 #             a time (same services and server group); the node swapped out is freshly installed with the new
 #             version (install.yml) and becomes the next spare, until every node runs the new version.
-#             Order follows the recommended path: all KV (data) nodes first (orchestrator last among them), then
-#             the remaining query/index nodes one at a time in random order (--swap-seed replays an order).
+#             Order follows the recommended path: all KV (data) nodes first, then the remaining query/index nodes
+#             one at a time in random order (--swap-seed replays an order). The first provider host (sequoia's
+#             master/orchestrator) is swapped out first and its reinstall is swapped back in for the next node with
+#             the same services, so it is a cluster member with its original services after the upgrade.
 #             Spares come from --spare-hosts or, when it is empty, from the provider hosts that are not cluster
 #             members (e.g. the 12th host when a test uses 11), so the provider file stays the same size.
 #   offline - stop Couchbase on every node, dpkg -i the new package over the existing one, start (upgrade.yml)
 #
 # Hosts in the provider file that are not cluster members (sequoia's inactive nodes) are freshly installed with
 # the new version too, so a post-upgrade test that rebalances them in does not bring the old version back.
-# The provider file is rewritten with the post-upgrade membership (cluster members first) for the next
-# sequoia run; the original is kept as <provider-file>.pre_upgrade.
+# The provider file is rewritten with the post-upgrade membership (cluster members first, the original first
+# host still first) for the next sequoia run; the original is kept as <provider-file>.pre_upgrade.
 #
 # Usage: ./upgrade.sh --mode online|offline --cb-version VER --cb-build BUILD [options]
 #
@@ -308,16 +310,36 @@ echo "Inactive provider hosts: ${INACTIVE[*]:-none}"
 [[ "$MODE" == "online" ]] && echo "Spare hosts: ${SPARES[*]} (from ${SPARE_SOURCE})"
 echo ""
 
-# Online swap order (recommended upgrade path): every node running kv first, with the orchestrator last among
-# them, then the query/index nodes one at a time in random order.
+# Online swap order (recommended upgrade path): every node running kv first, then the query/index nodes one at
+# a time in random order. The master (first provider host) goes first: swapped-out nodes are reinstalled and
+# become the next spare, so the master is swapped back in for the second node, which must run the same services
+# for the master to keep its role.
+MASTER=${MEMBERS[0]}
 SWAP_ORDER=()
 if [[ "$MODE" == "online" ]]; then
+    master_svc=$(awk -F'\t' -v ip="$MASTER" '$1 == ip {print $3}' <<< "$members")
     KV_NODES=()
     OTHER_NODES=()
-    for ip in "${MEMBERS[@]:1}" "${MEMBERS[0]}"; do
+    for ip in "${MEMBERS[@]:1}"; do
         svc=$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")
         if [[ ",$svc," == *",kv,"* ]]; then KV_NODES+=("$ip"); else OTHER_NODES+=("$ip"); fi
     done
+    # the node the master replaces: first other member with the master's services
+    partner=""
+    for ip in "${KV_NODES[@]}" "${OTHER_NODES[@]}"; do
+        [[ "$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")" == "$master_svc" ]] && { partner=$ip; break; }
+    done
+    if [[ -n "$partner" ]]; then
+        rest=()
+        for ip in "${KV_NODES[@]}"; do [[ "$ip" != "$partner" ]] && rest+=("$ip"); done
+        others=()
+        for ip in "${OTHER_NODES[@]}"; do [[ "$ip" != "$partner" ]] && others+=("$ip"); done
+        KV_NODES=("$MASTER" "$partner" "${rest[@]}")
+        OTHER_NODES=("${others[@]}")
+    else
+        echo -e "${YELLOW}No other member runs the master's services ($master_svc): $MASTER will come back with other services${NC}"
+        KV_NODES=("$MASTER" "${KV_NODES[@]}")
+    fi
     [[ -n "$SWAP_SEED" ]] || SWAP_SEED=$RANDOM
     RANDOM=$SWAP_SEED
     for ((i = ${#OTHER_NODES[@]} - 1; i > 0; i--)); do
@@ -325,7 +347,7 @@ if [[ "$MODE" == "online" ]]; then
         tmp=${OTHER_NODES[$i]}; OTHER_NODES[$i]=${OTHER_NODES[$j]}; OTHER_NODES[$j]=$tmp
     done
     SWAP_ORDER=("${KV_NODES[@]}" "${OTHER_NODES[@]}")
-    echo "Swap order (KV first, then query/index in random order, --swap-seed $SWAP_SEED):"
+    echo "Swap order (master $MASTER first, then KV, then query/index in random order, --swap-seed $SWAP_SEED):"
     for ip in "${SWAP_ORDER[@]}"; do
         echo "  $ip ($(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members"))"
     done
@@ -399,6 +421,14 @@ else
         fresh_install "$old"
         SPARES+=("$old")
     done
+    # keep the master first in the provider file (sequoia's orchestrator) when it is back in the cluster
+    if [[ " ${FINAL_MEMBERS[*]} " == *" $MASTER "* ]]; then
+        reordered=("$MASTER")
+        for ip in "${FINAL_MEMBERS[@]}"; do [[ "$ip" != "$MASTER" ]] && reordered+=("$ip"); done
+        FINAL_MEMBERS=("${reordered[@]}")
+    else
+        echo -e "${YELLOW}$MASTER is not a cluster member after the upgrade${NC}"
+    fi
     wait_for_healthy_cluster "${FINAL_MEMBERS[0]}"
     LEFTOVER=("${SPARES[@]}")
 fi
