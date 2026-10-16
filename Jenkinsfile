@@ -253,7 +253,8 @@ pipeline {
                     def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}"]) {
+                            // UPGRADE_MODE is read by test YAMLs through the {{env `UPGRADE_MODE`}} template
+                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}"]) {
                                 sh """
                                     ./sequoia \
                                         -client ${env.SLAVE_IP}:2375 \
