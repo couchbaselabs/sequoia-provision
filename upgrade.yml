@@ -1,9 +1,10 @@
 ---
 # Offline (in-place) Upgrade Playbook
-# Stops Couchbase Server on every target host, installs the new package over the existing one with dpkg
+# Stops Couchbase Server on the target hosts, installs the new package over the existing one with dpkg
 # (data, config and cluster membership are kept) and starts it again. Unlike install.yml nothing is
-# uninstalled or wiped. With the default linear strategy every host is stopped before any host is upgraded,
-# which is what an offline upgrade requires.
+# uninstalled or wiped. upgrade.sh --mode offline runs it for one node at a time (and waits for that node to be
+# healthy before the next); given several hosts, the default linear strategy stops every host before any is
+# upgraded.
 # Usage: ansible-playbook -i ansible/hosts upgrade.yml -e "target_hosts=couchbase_servers" -e "FLAVOR=totoro" -e "VER=8.5.0" -e "BUILD_NO=1130"
 # Normally driven by upgrade.sh --mode offline.
 

@@ -11,7 +11,11 @@
 #             the same services, so it is a cluster member with its original services after the upgrade.
 #             Spares come from --spare-hosts or, when it is empty, from the provider hosts that are not cluster
 #             members (e.g. the 12th host when a test uses 11), so the provider file stays the same size.
-#   offline - stop Couchbase on every node, dpkg -i the new package over the existing one, start (upgrade.yml)
+#   offline - in place, one node at a time: stop Couchbase, dpkg -i the new package over the existing one, start
+#             (upgrade.yml), wait until the node is healthy on the new version, then the next node. Same order as
+#             online (master and other KV nodes first, then query/index in random order, --swap-seed replays it).
+#             Auto-failover is disabled for the duration (a stopped node would otherwise be failed over) and
+#             restored afterwards.
 #
 # Hosts in the provider file that are not cluster members (sequoia's inactive nodes) are freshly installed with
 # the new version too, so a post-upgrade test that rebalances them in does not bring the old version back.
@@ -224,6 +228,53 @@ wait_for_healthy_cluster() {
     die "Cluster not healthy on $CB_VERSION within ${HEALTH_TIMEOUT}s"
 }
 
+# One node back after an in-place upgrade: an active member, healthy (warmed up) and on the new version
+wait_for_node_upgraded() {
+    local orch=$1 node=$2 deadline=$((SECONDS + HEALTH_TIMEOUT)) row
+    while (( SECONDS < deadline )); do
+        row=$(cluster_members "$orch" 2>/dev/null | awk -F'\t' -v ip="$node" '$1 == ip')
+        if [[ -n "$row" ]] && awk -F'\t' -v v="$CB_VERSION" '$5 == "healthy" && index($4, v) == 1 {ok=1} END {exit !ok}' <<< "$row"; then
+            log "${GREEN}$node healthy on $(cut -f4 <<< "$row")${NC}"
+            return 0
+        fi
+        log "Waiting for $node: $(cut -f4,5 <<< "$row" | tr '\t' ' ')"
+        sleep 30
+    done
+    die "$node not healthy on $CB_VERSION within ${HEALTH_TIMEOUT}s"
+}
+
+# Auto-failover would fail over a node stopped for its upgrade: off for the upgrade, original setting restored
+AUTO_FAILOVER_ORCH=""
+AUTO_FAILOVER_RESTORE=()
+disable_auto_failover() {
+    local orch=$1 settings
+    settings=$(rest_get "$orch" /settings/autoFailover) || die "Cannot read auto-failover settings"
+    if [[ "$(jq -r '.enabled' <<< "$settings")" != "true" ]]; then
+        log "Auto-failover already disabled"
+        return 0
+    fi
+    AUTO_FAILOVER_ORCH=$orch
+    AUTO_FAILOVER_RESTORE=(--data-urlencode "enabled=true" --data-urlencode "timeout=$(jq -r '.timeout' <<< "$settings")")
+    local max_count
+    max_count=$(jq -r '.maxCount // empty' <<< "$settings")
+    [[ -n "$max_count" ]] && AUTO_FAILOVER_RESTORE+=(--data-urlencode "maxCount=$max_count")
+    rest_post "$orch" /settings/autoFailover --data-urlencode "enabled=false" > /dev/null \
+        || die "Disabling auto-failover failed"
+    trap restore_auto_failover EXIT
+    log "Auto-failover disabled for the upgrade (was enabled, timeout $(jq -r '.timeout' <<< "$settings")s)"
+}
+
+restore_auto_failover() {
+    [[ -n "$AUTO_FAILOVER_ORCH" ]] || return 0
+    local orch=$AUTO_FAILOVER_ORCH
+    AUTO_FAILOVER_ORCH=""
+    if rest_post "$orch" /settings/autoFailover "${AUTO_FAILOVER_RESTORE[@]}" > /dev/null; then
+        log "Auto-failover restored"
+    else
+        echo -e "${RED}Restoring auto-failover on $orch failed: re-enable it by hand${NC}" >&2
+    fi
+}
+
 # ---------------------------------------------------------------- ansible helpers
 
 run_playbook() {  # run_playbook PLAYBOOK "IP IP" [extra -e args...]
@@ -310,20 +361,19 @@ echo "Inactive provider hosts: ${INACTIVE[*]:-none}"
 [[ "$MODE" == "online" ]] && echo "Spare hosts: ${SPARES[*]} (from ${SPARE_SOURCE})"
 echo ""
 
-# Online swap order (recommended upgrade path): every node running kv first, then the query/index nodes one at
-# a time in random order. The master (first provider host) goes first: swapped-out nodes are reinstalled and
-# become the next spare, so the master is swapped back in for the second node, which must run the same services
-# for the master to keep its role.
+# Upgrade order (recommended upgrade path), for both modes: every node running kv first, then the query/index nodes
+# one at a time in random order. The master (first provider host) goes first. Online: swapped-out nodes are
+# reinstalled and become the next spare, so the master is swapped back in for the second node, which must run the
+# same services for the master to keep its role.
 MASTER=${MEMBERS[0]}
-SWAP_ORDER=()
+master_svc=$(awk -F'\t' -v ip="$MASTER" '$1 == ip {print $3}' <<< "$members")
+KV_NODES=()
+OTHER_NODES=()
+for ip in "${MEMBERS[@]:1}"; do
+    svc=$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")
+    if [[ ",$svc," == *",kv,"* ]]; then KV_NODES+=("$ip"); else OTHER_NODES+=("$ip"); fi
+done
 if [[ "$MODE" == "online" ]]; then
-    master_svc=$(awk -F'\t' -v ip="$MASTER" '$1 == ip {print $3}' <<< "$members")
-    KV_NODES=()
-    OTHER_NODES=()
-    for ip in "${MEMBERS[@]:1}"; do
-        svc=$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")
-        if [[ ",$svc," == *",kv,"* ]]; then KV_NODES+=("$ip"); else OTHER_NODES+=("$ip"); fi
-    done
     # the node the master replaces: first other member with the master's services
     partner=""
     for ip in "${KV_NODES[@]}" "${OTHER_NODES[@]}"; do
@@ -340,25 +390,33 @@ if [[ "$MODE" == "online" ]]; then
         echo -e "${YELLOW}No other member runs the master's services ($master_svc): $MASTER will come back with other services${NC}"
         KV_NODES=("$MASTER" "${KV_NODES[@]}")
     fi
-    [[ -n "$SWAP_SEED" ]] || SWAP_SEED=$RANDOM
-    RANDOM=$SWAP_SEED
-    for ((i = ${#OTHER_NODES[@]} - 1; i > 0; i--)); do
-        j=$((RANDOM % (i + 1)))
-        tmp=${OTHER_NODES[$i]}; OTHER_NODES[$i]=${OTHER_NODES[$j]}; OTHER_NODES[$j]=$tmp
-    done
-    SWAP_ORDER=("${KV_NODES[@]}" "${OTHER_NODES[@]}")
-    echo "Swap order (master $MASTER first, then KV, then query/index in random order, --swap-seed $SWAP_SEED):"
-    for ip in "${SWAP_ORDER[@]}"; do
-        echo "  $ip ($(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members"))"
-    done
-    echo ""
+elif [[ ",$master_svc," == *",kv,"* ]]; then
+    KV_NODES=("$MASTER" "${KV_NODES[@]}")
+else
+    OTHER_NODES=("$MASTER" "${OTHER_NODES[@]}")
 fi
+[[ -n "$SWAP_SEED" ]] || SWAP_SEED=$RANDOM
+RANDOM=$SWAP_SEED
+for ((i = ${#OTHER_NODES[@]} - 1; i > 0; i--)); do
+    j=$((RANDOM % (i + 1)))
+    tmp=${OTHER_NODES[$i]}; OTHER_NODES[$i]=${OTHER_NODES[$j]}; OTHER_NODES[$j]=$tmp
+done
+SWAP_ORDER=("${KV_NODES[@]}" "${OTHER_NODES[@]}")
+if [[ "$MODE" == "online" ]]; then
+    echo "Swap order (master $MASTER first, then KV, then query/index in random order, --swap-seed $SWAP_SEED):"
+else
+    echo "Upgrade order (one node at a time: KV first, then query/index in random order, --swap-seed $SWAP_SEED):"
+fi
+for ip in "${SWAP_ORDER[@]}"; do
+    echo "  $ip ($(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members"))"
+done
+echo ""
 
 if [[ "$DRY_RUN" == true ]]; then
     if [[ "$MODE" == "online" ]]; then
         echo "Plan: install ${CB_VERSION} on spares ${SPARES[*]}, then swap in the order above"
     else
-        echo "Plan: stop, dpkg -i, start on ${MEMBERS[*]}"
+        echo "Plan: one node at a time in the order above: stop, dpkg -i, start, wait until healthy"
     fi
     [[ "$REINSTALL_INACTIVE" == true && ${#INACTIVE[@]} -gt 0 ]] && echo "Plan: fresh install ${CB_VERSION} on inactive ${INACTIVE[*]}"
     exit 0
@@ -370,8 +428,24 @@ cp "$PROVIDER_FILE" "$PROVIDER_FILE.pre_upgrade"
 
 FINAL_MEMBERS=()
 if [[ "$MODE" == "offline" ]]; then
-    run_playbook upgrade.yml "${MEMBERS[*]}"
+    disable_auto_failover "$MASTER"
+    step=0
+    for node in "${SWAP_ORDER[@]}"; do
+        step=$((step + 1))
+        # drive REST from a member that stays up while this node is stopped
+        orch=""
+        for ip in "${MEMBERS[@]}"; do [[ "$ip" != "$node" ]] && { orch=$ip; break; }; done
+        [[ -n "$orch" ]] || orch=$node
+        echo -e "${YELLOW}Node $step/${#SWAP_ORDER[@]}: $node ($(member_field "$orch" "$node" 3)) $(member_field "$orch" "$node" 4)${NC}"
+        run_playbook upgrade.yml "$node"
+        if [[ "$orch" == "$node" ]]; then
+            wait_for_healthy_cluster "$node"
+        else
+            wait_for_node_upgraded "$orch" "$node"
+        fi
+    done
     wait_for_healthy_cluster "${MEMBERS[0]}"
+    restore_auto_failover
     FINAL_MEMBERS=("${MEMBERS[@]}")
     LEFTOVER=()
 else
