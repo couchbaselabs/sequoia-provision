@@ -24,6 +24,7 @@ pipeline {
         string(name: 'UPGRADE_CB_BUILD', defaultValue: '', description: 'Final build number')
         string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the final version (overrides version/build)')
         string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Optional spare node IPs for online upgrade (empty: the pool host outside the cluster)')
+        string(name: 'UPGRADE_SWAP_SEED', defaultValue: '', description: 'Optional upgrade.sh --swap-seed for every path: replays a node order (the topology is the same on every path). Empty: random per path')
         string(name: 'TEST_FILE',
                defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_pre_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Pre-upgrade test (and -scope)')
@@ -83,6 +84,7 @@ pipeline {
                                     string(name: 'UPGRADE_CB_BUILD', value: params.UPGRADE_CB_BUILD),
                                     string(name: 'UPGRADE_CB_INSTALL_URL', value: params.UPGRADE_CB_INSTALL_URL),
                                     string(name: 'UPGRADE_SPARE_HOSTS', value: params.UPGRADE_SPARE_HOSTS),
+                                    string(name: 'UPGRADE_SWAP_SEED', value: params.UPGRADE_SWAP_SEED ?: ''),
                                     string(name: 'POST_UPGRADE_TEST_FILE', value: params.POST_UPGRADE_TEST_FILE),
                                     string(name: 'SCALE', value: params.SCALE),
                                     string(name: 'LOG_LEVEL', value: params.LOG_LEVEL),
