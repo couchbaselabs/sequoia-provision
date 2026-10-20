@@ -40,7 +40,7 @@ pipeline {
                      description: 'Each path stops the running eagle eye build for the cluster master and starts a fresh one')
         string(name: 'EMAIL_RECIPIENTS', defaultValue: '', description: 'Eagle eye recipients (empty: log parser job default)')
         string(name: 'CONSOLE_CREDS_ID', defaultValue: '',
-               description: 'Optional usernamePassword credentials (user + API token) for reading the downstream consoles over REST, used when the sandbox does not allow reading them directly')
+               description: 'Optional usernamePassword credentials (user + API token) for reading the downstream consoles over REST; empty reads them anonymously')
         booleanParam(name: 'CONTINUE_ON_FAILURE', defaultValue: true,
                      description: 'Run the remaining paths when one fails (each path reinstalls the cluster)')
     }
@@ -157,12 +157,12 @@ def buildReport(List paths, String target) {
                               url: path.url, readError: '']
                 if (path.run) {
                     def text = readConsole(path.run)
-                    if (text == null && params.CONSOLE_CREDS_ID?.trim()) {
+                    if (text == null) {
                         text = fetchConsole(path.url, "console_${i + 1}.txt")
                     }
                     if (text == null) {
-                        report.readError = 'console not readable: approve RunWrapper.getRawBuild and Run.getLog in ' +
-                                           'script approval, or set CONSOLE_CREDS_ID'
+                        report.readError = 'console not readable: set CONSOLE_CREDS_ID (anonymous read was refused), or ' +
+                                           'approve RunWrapper.getRawBuild and Run.getLog in script approval'
                     } else {
                         report.putAll(parseConsole(text))
                     }
@@ -205,6 +205,14 @@ def readConsole(run) {
 }
 
 def fetchConsole(String buildUrl, String file) {
+    if (!params.CONSOLE_CREDS_ID?.trim()) {
+        // This Jenkins lets anonymous users read consoles
+        def rc = 1
+        withEnv(["CONSOLE_URL=${buildUrl}consoleText", "CONSOLE_FILE=${file}"]) {
+            rc = sh(returnStatus: true, script: 'curl -sSf --connect-timeout 15 --max-time 600 -o "$CONSOLE_FILE" "$CONSOLE_URL"')
+        }
+        return rc == 0 ? readFile(file) : null
+    }
     def ok = false
     withCredentials([usernamePassword(credentialsId: params.CONSOLE_CREDS_ID, usernameVariable: 'CONSOLE_USER',
                                       passwordVariable: 'CONSOLE_TOKEN')]) {
@@ -370,8 +378,8 @@ def parseConsole(String text) {
     }
     def list = []
     for (a in actions.values()) {
-        list << [phase: a.phase, action: a.action, passed: a.passed, warnings: a.warnings as List,
-                 errors: a.errors as List, failed: a.failed]
+        list << [phase: a.phase, action: a.action, passed: a.passed, warnings: new ArrayList(a.warnings),
+                 errors: new ArrayList(a.errors), failed: a.failed]
     }
     // Swap n lasts until swap n+1 starts (the last one until the upgrade's last progress line)
     for (int i = 0; i < upgrade.swaps.size(); i++) {
@@ -407,7 +415,7 @@ def clockDiff(String a, String b) {
     if (!a || !b) {
         return ''
     }
-    def secs = { String t -> def p = t.split(':'); (p[0] as int) * 3600 + (p[1] as int) * 60 + (p[2] as int) }
+    def secs = { String t -> def p = t.split(':'); Integer.parseInt(p[0]) * 3600 + Integer.parseInt(p[1]) * 60 + Integer.parseInt(p[2]) }
     int d = secs(b) - secs(a)
     if (d < 0) {
         d += 24 * 3600
@@ -535,77 +543,77 @@ def esc(Object o) {
 @NonCPS
 def renderHtml(List reports, String target, Map meta) {
     def h = new StringBuilder()
-    h << "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Upgrade series ${esc(meta.build)}</title></head><body>\n"
-    h << "<h1>Upgrade series to ${esc(target)} (${esc(meta.mode)}, ${esc(meta.component)})</h1>\n"
-    h << "<p>Series build: <a href=\"${esc(meta.url)}\">${esc(meta.url)}</a>. "
-    h << "A path PASSES only when its build succeeded, the cluster went from the source to the target version, "
-    h << "no tool check failed and no container failed unexpectedly.</p>\n"
-    h << "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>#</th><th>From</th><th>To</th><th>Mode</th>"
-    h << "<th>Upgrade order</th><th>Verdict</th><th>Build</th><th>Checks</th><th>Eagle eye</th></tr>\n"
+    h.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Upgrade series ${esc(meta.build)}</title></head><body>\n")
+    h.append("<h1>Upgrade series to ${esc(target)} (${esc(meta.mode)}, ${esc(meta.component)})</h1>\n")
+    h.append("<p>Series build: <a href=\"${esc(meta.url)}\">${esc(meta.url)}</a>. ")
+    h.append("A path PASSES only when its build succeeded, the cluster went from the source to the target version, ")
+    h.append("no tool check failed and no container failed unexpectedly.</p>\n")
+    h.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>#</th><th>From</th><th>To</th><th>Mode</th>")
+    h.append("<th>Upgrade order</th><th>Verdict</th><th>Build</th><th>Checks</th><th>Eagle eye</th></tr>\n")
     for (r in reports) {
         def u = r.upgrade ?: [:]
-        h << "<tr><td><a href=\"#p${reports.indexOf(r)}\">${reports.indexOf(r) + 1}</a></td>"
-        h << "<td>${esc(u.before ? versions(u.before) : r.source)}</td>"
-        h << "<td>${esc(u.after ? versions(u.after) : r.target)}</td><td>${esc(u.mode ?: meta.mode)}</td>"
-        h << "<td>${esc(u.order)}${u.seed ? " (seed ${esc(u.seed)})" : ''}</td><td><b>${esc(r.verdict)}</b></td>"
-        h << "<td>${r.url ? "<a href=\"${esc(r.url)}\">${esc(r.result)}</a>" : esc(r.result)}</td>"
-        h << "<td>${esc(summaryCounts(r))}</td>"
-        h << "<td>${r.eagleEye ? "<a href=\"${esc(r.eagleEye)}\">eagle eye</a>" : ''}</td></tr>\n"
+        h.append("<tr><td><a href=\"#p${reports.indexOf(r)}\">${reports.indexOf(r) + 1}</a></td>")
+        h.append("<td>${esc(u.before ? versions(u.before) : r.source)}</td>")
+        h.append("<td>${esc(u.after ? versions(u.after) : r.target)}</td><td>${esc(u.mode ?: meta.mode)}</td>")
+        h.append("<td>${esc(u.order)}${u.seed ? " (seed ${esc(u.seed)})" : ''}</td><td><b>${esc(r.verdict)}</b></td>")
+        h.append("<td>${r.url ? "<a href=\"${esc(r.url)}\">${esc(r.result)}</a>" : esc(r.result)}</td>")
+        h.append("<td>${esc(summaryCounts(r))}</td>")
+        h.append("<td>${r.eagleEye ? "<a href=\"${esc(r.eagleEye)}\">eagle eye</a>" : ''}</td></tr>\n")
     }
-    h << "</table>\n"
+    h.append("</table>\n")
     for (r in reports) {
-        h << "<h2 id=\"p${reports.indexOf(r)}\">${esc(r.label)}: ${esc(r.verdict)}</h2>\n"
+        h.append("<h2 id=\"p${reports.indexOf(r)}\">${esc(r.label)}: ${esc(r.verdict)}</h2>\n")
         if (r.readError) {
-            h << "<p>${esc(r.readError)}</p>\n"
+            h.append("<p>${esc(r.readError)}</p>\n")
         }
         if (r.actions == null) {
             continue
         }
         if (!r.actions) {
-            h << "<p>No tool check output in the console (sequoia LOG_LEVEL must be 2 or higher).</p>\n"
+            h.append("<p>No tool check output in the console (sequoia LOG_LEVEL must be 2 or higher).</p>\n")
         }
         def u = r.upgrade ?: [:]
-        h << "<p><b>Versions:</b> ${esc(u.before ? versions(u.before) : r.source)} &rarr; "
-        h << "${esc(u.after ? versions(u.after) : r.target)} (${esc(u.mode ?: meta.mode)} upgrade"
-        h << "${u.duration ? ", ${esc(u.duration)}" : ''})<br>\n"
-        h << "<b>Upgrade order:</b> ${esc(u.order ?: 'unknown')}${u.seed ? " (--swap-seed ${esc(u.seed)} replays it)" : ''}</p>\n"
+        h.append("<p><b>Versions:</b> ${esc(u.before ? versions(u.before) : r.source)} &rarr; ")
+        h.append("${esc(u.after ? versions(u.after) : r.target)} (${esc(u.mode ?: meta.mode)} upgrade")
+        h.append("${u.duration ? ", ${esc(u.duration)}" : ''})<br>\n")
+        h.append("<b>Upgrade order:</b> ${esc(u.order ?: 'unknown')}${u.seed ? " (--swap-seed ${esc(u.seed)} replays it)" : ''}</p>\n")
         def problems = upgradeProblems(r)
         if (problems) {
-            h << "<h3>Upgrade problems</h3><ul>\n"
+            h.append("<h3>Upgrade problems</h3><ul>\n")
             for (p in problems) {
-                h << "<li>${esc(p)}</li>\n"
+                h.append("<li>${esc(p)}</li>\n")
             }
-            h << "</ul>\n"
+            h.append("</ul>\n")
         }
         if (u.swaps) {
-            h << "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Step</th><th>Node</th>"
-            h << "<th>Services</th><th>Replaced by</th><th>Started</th><th>Took</th></tr>\n"
+            h.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Step</th><th>Node</th>")
+            h.append("<th>Services</th><th>Replaced by</th><th>Started</th><th>Took</th></tr>\n")
             for (sw in u.swaps) {
-                h << "<tr><td>${esc(sw.n)}/${esc(sw.of)}</td><td>${esc(sw.out)}</td><td>${esc(serviceName(sw.services))}</td>"
-                h << "<td>${esc(sw.replacement)}</td><td>${esc(sw.start)}</td><td>${esc(sw.duration)}</td></tr>\n"
+                h.append("<tr><td>${esc(sw.n)}/${esc(sw.of)}</td><td>${esc(sw.out)}</td><td>${esc(serviceName(sw.services))}</td>")
+                h.append("<td>${esc(sw.replacement)}</td><td>${esc(sw.start)}</td><td>${esc(sw.duration)}</td></tr>\n")
             }
-            h << "</table>\n"
+            h.append("</table>\n")
         }
         if (u.before || u.after) {
-            h << "<p><b>Topology</b></p><table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Before</th>"
-            h << "<th>Version</th><th>Services</th><th>After</th><th>Version</th><th>Services</th></tr>\n"
+            h.append("<p><b>Topology</b></p><table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Before</th>")
+            h.append("<th>Version</th><th>Services</th><th>After</th><th>Version</th><th>Services</th></tr>\n")
             int rows = Math.max(u.before.size(), u.after.size())
             for (int i = 0; i < rows; i++) {
                 def b = i < u.before.size() ? u.before[i] : [:]
                 def a = i < u.after.size() ? u.after[i] : [:]
-                h << "<tr><td>${esc(b.host)}</td><td>${esc(b.version)}</td><td>${esc(b.services ? serviceName(b.services) : '')}</td>"
-                h << "<td>${esc(a.host)}</td><td>${esc(a.version)}</td><td>${esc(a.services ? serviceName(a.services) : '')}</td></tr>\n"
+                h.append("<tr><td>${esc(b.host)}</td><td>${esc(b.version)}</td><td>${esc(b.services ? serviceName(b.services) : '')}</td>")
+                h.append("<td>${esc(a.host)}</td><td>${esc(a.version)}</td><td>${esc(a.services ? serviceName(a.services) : '')}</td></tr>\n")
             }
-            h << "</table>\n"
+            h.append("</table>\n")
         }
-        h << "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Phase</th><th>Check</th><th>Result</th>"
-        h << "<th>Warnings</th><th>Failures</th></tr>\n"
+        h.append("<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Phase</th><th>Check</th><th>Result</th>")
+        h.append("<th>Warnings</th><th>Failures</th></tr>\n")
         for (a in r.actions) {
             def result = a.failed ? 'FAILED' : (a.passed > 0 ? 'passed' : 'no result line')
-            h << "<tr><td>${esc(a.phase)}</td><td>${esc(a.action)}</td><td><b>${result}</b></td>"
-            h << "<td>${a.warnings.size()}</td><td>${a.errors.size()}</td></tr>\n"
+            h.append("<tr><td>${esc(a.phase)}</td><td>${esc(a.action)}</td><td><b>${result}</b></td>")
+            h.append("<td>${a.warnings.size()}</td><td>${a.errors.size()}</td></tr>\n")
         }
-        h << "</table>\n"
+        h.append("</table>\n")
         def failures = []
         for (a in r.actions) {
             for (e in a.errors) {
@@ -613,22 +621,22 @@ def renderHtml(List reports, String target, Map meta) {
             }
         }
         if (failures) {
-            h << "<h3>Failures</h3><ul>\n"
+            h.append("<h3>Failures</h3><ul>\n")
             for (f in failures) {
-                h << "<li>${esc(f.length() > 600 ? f.substring(0, 600) + '...' : f)}</li>\n"
+                h.append("<li>${esc(f.length() > 600 ? f.substring(0, 600) + '...' : f)}</li>\n")
             }
-            h << "</ul>\n"
+            h.append("</ul>\n")
         }
         if (r.containers) {
-            h << "<h3>Container errors</h3><table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Phase</th>"
-            h << "<th>Image</th><th>Action</th><th>Counts</th><th>Detail</th></tr>\n"
+            h.append("<h3>Container errors</h3><table border=\"1\" cellpadding=\"4\" cellspacing=\"0\"><tr><th>Phase</th>")
+            h.append("<th>Image</th><th>Action</th><th>Counts</th><th>Detail</th></tr>\n")
             for (c in r.containers) {
                 def counts = c.usage ? 'FAILED (usage error: image older than the test)' :
                              (c.expected ? 'expected (expect_error)' : 'FAILED')
-                h << "<tr><td>${esc(c.phase)}</td><td>${esc(c.image)}</td><td>${esc(c.action)}</td><td>${counts}</td>"
-                h << "<td>${esc(c.detail ?: c.args)}</td></tr>\n"
+                h.append("<tr><td>${esc(c.phase)}</td><td>${esc(c.image)}</td><td>${esc(c.action)}</td><td>${counts}</td>")
+                h.append("<td>${esc(c.detail ?: c.args)}</td></tr>\n")
             }
-            h << "</table>\n"
+            h.append("</table>\n")
         }
         def warned = []
         for (a in r.actions) {
@@ -637,14 +645,14 @@ def renderHtml(List reports, String target, Map meta) {
             }
         }
         if (warned) {
-            h << "<details><summary>${warned.size()} warnings</summary><ul>\n"
+            h.append("<details><summary>${warned.size()} warnings</summary><ul>\n")
             for (w in warned) {
-                h << "<li>${esc(w.length() > 400 ? w.substring(0, 400) + '...' : w)}</li>\n"
+                h.append("<li>${esc(w.length() > 400 ? w.substring(0, 400) + '...' : w)}</li>\n")
             }
-            h << "</ul></details>\n"
+            h.append("</ul></details>\n")
         }
     }
-    h << "</body></html>\n"
+    h.append("</body></html>\n")
     return h.toString()
 }
 
