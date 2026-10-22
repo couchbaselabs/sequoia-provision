@@ -25,6 +25,7 @@ pipeline {
         string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the upgrade version (overrides version/build)')
         string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Optional spare node IPs for online upgrade. Empty: the pool hosts the test keeps out of the cluster are used (e.g. the 12th host of component7 when the scope uses 11)')
         string(name: 'UPGRADE_SWAP_SEED', defaultValue: '', description: 'Optional upgrade.sh --swap-seed: replays the node order of an earlier run (printed as --swap-seed N). Empty: random order')
+        booleanParam(name: 'ENABLE_SHARD_AFFINITY', defaultValue: false, description: 'Online upgrade only, CB_VERSION 7.6+: the pre-upgrade test sets indexer.settings.enable_shard_affinity=true before creating indexes, so the swap rebalances move indexes file-based. Ignored for UPGRADE_MODE none/offline and for CB_VERSION below 7.6. Read by test YAMLs as {{env `ENABLE_SHARD_AFFINITY`}}')
         string(name: 'POST_UPGRADE_TEST_FILE', defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_post_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Test (and -scope) run after the upgrade with -skip_setup; use the same scope as TEST_FILE')
         string(name: 'SGW_VERSION', defaultValue: '3.2.0', description: 'Sync Gateway version')
@@ -254,8 +255,9 @@ pipeline {
                     def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                            // UPGRADE_MODE is read by test YAMLs through the {{env `UPGRADE_MODE`}} template
-                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}"]) {
+                            // UPGRADE_MODE and ENABLE_SHARD_AFFINITY are read by test YAMLs through the {{env `...`}} template
+                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}",
+                                     "ENABLE_SHARD_AFFINITY=${params.ENABLE_SHARD_AFFINITY}"]) {
                                 sh """
                                     ./sequoia \
                                         -client ${env.SLAVE_IP}:2375 \
@@ -465,6 +467,9 @@ pipeline {
                             error "UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required for UPGRADE_MODE=${params.UPGRADE_MODE}"
                         }
                         currentBuild.description += " | Upgrade (${params.UPGRADE_MODE}): ${params.UPGRADE_CB_VERSION} - ${params.UPGRADE_CB_BUILD}"
+                        if (params.ENABLE_SHARD_AFFINITY && params.UPGRADE_MODE == 'online') {
+                            currentBuild.description += " | shard affinity"
+                        }
                         echo ">>> Starting ${params.UPGRADE_MODE} upgrade to ${params.UPGRADE_CB_VERSION}-${params.UPGRADE_CB_BUILD}..."
                         withCredentials(provisionCreds) {
                             dir('/root/sequoia-provision') {

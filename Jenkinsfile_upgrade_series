@@ -25,6 +25,8 @@ pipeline {
         string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the final version (overrides version/build)')
         string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Optional spare node IPs for online upgrade (empty: the pool host outside the cluster)')
         string(name: 'UPGRADE_SWAP_SEED', defaultValue: '', description: 'Optional upgrade.sh --swap-seed for every path: replays a node order (the topology is the same on every path). Empty: random per path')
+        booleanParam(name: 'ENABLE_SHARD_AFFINITY', defaultValue: false,
+                     description: 'Online only: enable GSI shard affinity (file-based index rebalance) before the indexes are created, on paths whose source version is 7.6+ (older sources run without it)')
         string(name: 'TEST_FILE',
                defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_pre_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Pre-upgrade test (and -scope)')
@@ -60,6 +62,9 @@ pipeline {
                         labels << sources[i].label
                     }
                     currentBuild.description = "${params.UPGRADE_MODE} | ${params.COMPONENT} | ${labels.join(', ')} -> ${target}"
+                    if (params.ENABLE_SHARD_AFFINITY && params.UPGRADE_MODE == 'online') {
+                        currentBuild.description += ' | shard affinity'
+                    }
 
                     def paths = []
                     for (int i = 0; i < sources.size(); i++) {
@@ -85,6 +90,7 @@ pipeline {
                                     string(name: 'UPGRADE_CB_INSTALL_URL', value: params.UPGRADE_CB_INSTALL_URL),
                                     string(name: 'UPGRADE_SPARE_HOSTS', value: params.UPGRADE_SPARE_HOSTS),
                                     string(name: 'UPGRADE_SWAP_SEED', value: params.UPGRADE_SWAP_SEED ?: ''),
+                                    booleanParam(name: 'ENABLE_SHARD_AFFINITY', value: params.ENABLE_SHARD_AFFINITY),
                                     string(name: 'POST_UPGRADE_TEST_FILE', value: params.POST_UPGRADE_TEST_FILE),
                                     string(name: 'SCALE', value: params.SCALE),
                                     string(name: 'LOG_LEVEL', value: params.LOG_LEVEL),
