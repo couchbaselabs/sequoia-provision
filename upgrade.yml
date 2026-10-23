@@ -1,0 +1,78 @@
+---
+# Offline (in-place) Upgrade Playbook
+# Stops Couchbase Server on the target hosts, installs the new package over the existing one with dpkg
+# (data, config and cluster membership are kept) and starts it again. Unlike install.yml nothing is
+# uninstalled or wiped. upgrade.sh --mode offline runs it for one node at a time (and waits for that node to be
+# healthy before the next); given several hosts, the default linear strategy stops every host before any is
+# upgraded.
+# Usage: ansible-playbook -i ansible/hosts upgrade.yml -e "target_hosts=couchbase_servers" -e "FLAVOR=totoro" -e "VER=8.5.0" -e "BUILD_NO=1130"
+# Normally driven by upgrade.sh --mode offline.
+
+# Download first, while the cluster is still up, so the downtime is only the dpkg install
+- hosts: "{{ target_hosts }}"
+  serial: 1
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    build_no:  "{{BUILD_NO|default(2601)}}"
+    flavor:  "{{FLAVOR|default('watson')}}"
+    base_url:  http://172.23.126.166/builds/latestbuilds/couchbase-server/{{flavor}}/
+    build_pkg: "couchbase-server-enterprise_{{ver_no}}-{{build_no}}-linux_amd64.deb"
+    url_var: "{{base_url}}/{{build_no}}/{{build_pkg}}"
+    build_url: "{{URL|default(url_var)}}"
+    deb_path: "/tmp/couchbase-upgrade.deb"
+  remote_user: root
+  tasks:
+  - name: cleanup old upgrade pkg
+    shell: "rm -f {{deb_path}}"
+
+  - debug: msg="Download {{build_url}}"
+
+  - name: download binary
+    get_url: url="{{build_url}}" dest="{{deb_path}}"
+
+- hosts: "{{ target_hosts }}"
+  vars:
+    ver_no: "{{VER|default('4.5.0')}}"
+    deb_path: "/tmp/couchbase-upgrade.deb"
+  remote_user: root
+  tasks:
+  - name: installed version before upgrade
+    shell: "dpkg-query -W -f='${Version}' couchbase-server"
+    register: version_before
+
+  - debug: msg="{{ inventory_hostname }} upgrading {{ version_before.stdout }} -> {{ ver_no }}"
+
+  - name: stop couchbase
+    shell: "systemctl stop couchbase-server"
+
+  - name: wait for couchbase to stop
+    wait_for: port=8091 state=stopped timeout=600
+
+  - name: rm locks
+    shell: "rm /var/lib/dpkg/lock"
+    ignore_errors: True
+
+  - name: rm front end locks
+    shell: "rm /var/lib/dpkg/lock-frontend"
+    ignore_errors: True
+
+  - name: configure
+    shell: "dpkg --configure -a"
+
+  - name: install new package over the existing installation
+    shell: "DEBIAN_FRONTEND=noninteractive dpkg -i {{deb_path}}"
+
+  - name: start couchbase
+    shell: "systemctl start couchbase-server"
+
+  - name: wait for upgrade done
+    wait_for: port=8091 delay=10 timeout=900
+
+  - name: installed version after upgrade
+    shell: "dpkg-query -W -f='${Version}' couchbase-server"
+    register: version_after
+
+  - name: verify upgraded version
+    assert:
+      that: "ver_no in version_after.stdout"
+      fail_msg: "{{ inventory_hostname }} has {{ version_after.stdout }} after upgrade, expected {{ ver_no }}"

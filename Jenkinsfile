@@ -17,6 +17,17 @@ pipeline {
         string(name: 'CB_VERSION', defaultValue: '8.5.0', description: 'Couchbase version')
         string(name: 'CB_BUILD', defaultValue: '1130', description: 'Couchbase build number')
         string(name: 'TEST_FILE', defaultValue: 'tests/2i/7.6/test_7_6_gsi_system_test.yml -scope tests/2i/neo/scope_neo_plasma_idx_dgm.yml', description: 'Test file path')
+
+        choice(name: 'UPGRADE_MODE', choices: ['none', 'online', 'offline'],
+               description: 'none: just run TEST_FILE. online: rolling swap rebalance through a spare host (UPGRADE_SPARE_HOSTS, or the pool host outside the cluster). offline: in place one node at a time (stop, dpkg -i, start, wait until healthy), in the same order as online. With online/offline, TEST_FILE is the pre-upgrade test (CB_VERSION/CB_BUILD), e.g. tests/upgrade/gsi_query/test_gsi_query_pre_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml, and must finish within DURATION; then upgrade.sh runs and POST_UPGRADE_TEST_FILE runs with -skip_setup.')
+        string(name: 'UPGRADE_CB_VERSION', defaultValue: '', description: 'Couchbase version to upgrade to')
+        string(name: 'UPGRADE_CB_BUILD', defaultValue: '', description: 'Couchbase build number to upgrade to')
+        string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the upgrade version (overrides version/build)')
+        string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Optional spare node IPs for online upgrade. Empty: the pool hosts the test keeps out of the cluster are used (e.g. the 12th host of component7 when the scope uses 11)')
+        string(name: 'UPGRADE_SWAP_SEED', defaultValue: '', description: 'Optional upgrade.sh --swap-seed: replays the node order of an earlier run (printed as --swap-seed N). Empty: random order')
+        booleanParam(name: 'ENABLE_SHARD_AFFINITY', defaultValue: false, description: 'Online upgrade only, CB_VERSION 7.6+: the pre-upgrade test sets indexer.settings.enable_shard_affinity=true before creating indexes, so the swap rebalances move indexes file-based. Ignored for UPGRADE_MODE none/offline and for CB_VERSION below 7.6. Read by test YAMLs as {{env `ENABLE_SHARD_AFFINITY`}}')
+        string(name: 'POST_UPGRADE_TEST_FILE', defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_post_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
+               description: 'Test (and -scope) run after the upgrade with -skip_setup; use the same scope as TEST_FILE')
         string(name: 'SGW_VERSION', defaultValue: '3.2.0', description: 'Sync Gateway version')
         string(name: 'SGW_BUILD', defaultValue: '1234', description: 'Sync Gateway build number')
         string(name: 'CB_INSTALL_URL', defaultValue: '', description: 'Couchbase Server install URL')
@@ -151,14 +162,17 @@ pipeline {
                 script {
                     echo ">>> SKIP_INSTALL parameter value: ${params.SKIP_INSTALL}"
 
-                    withCredentials([
+                    // Shared by deploy.sh and upgrade.sh (which freshly installs spare and swapped-out nodes)
+                    def provisionCreds = [
                         usernamePassword(credentialsId: 'root', usernameVariable: 'SSH_USERNAME', passwordVariable: 'SSH_PASSWORD'),
                         usernamePassword(credentialsId: 'qe_db_cluster', usernameVariable: 'CONFIG_USERNAME', passwordVariable: 'CONFIG_PASSWORD'),
                         [$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'BACKUP_RESTORE_SYSTEMTEST_S3_ACCESS_KEYS', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'],
                         usernamePassword(credentialsId: 'BACKUP_RESTORE_SYSTEMTEST_AZURE_ACCESS_KEYS', usernameVariable: 'AZURE_STORAGE_ACCOUNT', passwordVariable: 'AZURE_STORAGE_KEY'),
                         string(credentialsId: 'BACKUP_RESTORE_SYSTEMTEST_AZURE_ENDPOINT', variable: 'AZURE_STORAGE_ENDPOINT'),
                         file(credentialsId: 'BACKUP_RESTORE_SYSTEMTEST_GCP_JSON', variable: 'GCP_SERVICE_ACCOUNT_FILE')
-                    ]) {
+                    ]
+
+                    withCredentials(provisionCreds) {
                         if (!params.SKIP_INSTALL) {
                             echo ">>> Starting Couchbase deployment..."
                             dir('/root/sequoia-provision') {
@@ -232,31 +246,47 @@ pipeline {
                         echo ">>> DOCKER_CREDS_ID not set - reusing existing login at ${dockerCfgDir}"
                     }
 
-                    def runSequoia = {
-                        echo ">>> Starting sequoia tests..."
+                    // An upgrade run's pre and post tests must each run exactly once (a second cycle would redo the
+                    // capture or repeat the post-upgrade rebalances), so REPEAT only applies when UPGRADE_MODE=none.
+                    def repeat = params.UPGRADE_MODE == 'none' ? params.REPEAT : '0'
+                    // sequoia treats -repeat 0 with -duration > 0 as "repeat until the duration expires", so an
+                    // upgrade run also drops the duration: each test runs exactly one cycle.
+                    def duration = params.UPGRADE_MODE == 'none' ? params.DURATION : '0'
+                    def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
+                        echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}"]) {
+                            // UPGRADE_MODE, ENABLE_SHARD_AFFINITY and UPGRADE_SOURCE_VERSION (the version installed before the
+                            // upgrade, which the post-upgrade run cannot see in -version) are read by test YAMLs through the
+                            // {{env `...`}} template
+                            withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}",
+                                     "ENABLE_SHARD_AFFINITY=${params.ENABLE_SHARD_AFFINITY}",
+                                     "UPGRADE_SOURCE_VERSION=${params.CB_VERSION}"]) {
                                 sh """
                                     ./sequoia \
                                         -client ${env.SLAVE_IP}:2375 \
                                         -provider file:provider.yml \
-                                        -test ${params.TEST_FILE} \
+                                        -test ${testFile} \
                                         -scale ${params.SCALE} \
-                                        -repeat ${params.REPEAT} \
+                                        -repeat ${repeat} \
                                         -log_level ${params.LOG_LEVEL} \
-                                        -version ${params.CB_VERSION} \
-                                        -skip_setup=${params.SKIP_SETUP} \
+                                        -version ${version} \
+                                        -skip_setup=${skipSetup} \
                                         -skip_test=${params.SKIP_TEST} \
                                         -skip_teardown=${params.SKIP_TEARDOWN} \
-                                        -skip_cleanup=${params.SKIP_CLEANUP} \
+                                        -skip_cleanup=${skipCleanup} \
                                         -collect_on_error=${params.COLLECT_ON_ERROR} \
                                         -stop_on_error=${params.STOP_ON_ERROR} \
-                                        -duration=${params.DURATION} \
+                                        -duration=${duration} \
                                         -show_topology=${params.SHOW_TOPOLOGY}
                                 """
                             }
                         }
                     }
+                    // For an upgrade the pre-upgrade test's background workload (mutations + queries) must keep
+                    // running through the upgrade, so its containers are not cleaned up when that run ends; the
+                    // post-upgrade test removes them as its first step.
+                    def runSequoia = { runSequoiaWith(params.TEST_FILE, params.CB_VERSION, params.SKIP_SETUP,
+                                                      params.UPGRADE_MODE != 'none' || params.SKIP_CLEANUP) }
 
                     // The log parser job tracks one cluster, keyed by its master_node param.
                     // deploy.sh writes the pool's master_node=true host first into provider.yaml, and
@@ -431,6 +461,44 @@ pipeline {
                         parallel(branches)
                     } else {
                         runSequoia()
+                    }
+
+                    // TEST_FILE above was the pre-upgrade run (it captures the query baseline under /data on
+                    // this slave); upgrade the cluster, then run the post-upgrade test against it.
+                    if (params.UPGRADE_MODE != 'none') {
+                        if (!params.UPGRADE_CB_VERSION?.trim() || !(params.UPGRADE_CB_BUILD?.trim() || params.UPGRADE_CB_INSTALL_URL?.trim())) {
+                            error "UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required for UPGRADE_MODE=${params.UPGRADE_MODE}"
+                        }
+                        currentBuild.description += " | Upgrade (${params.UPGRADE_MODE}): ${params.UPGRADE_CB_VERSION} - ${params.UPGRADE_CB_BUILD}"
+                        if (params.ENABLE_SHARD_AFFINITY && params.UPGRADE_MODE == 'online') {
+                            currentBuild.description += " | shard affinity"
+                        }
+                        echo ">>> Starting ${params.UPGRADE_MODE} upgrade to ${params.UPGRADE_CB_VERSION}-${params.UPGRADE_CB_BUILD}..."
+                        withCredentials(provisionCreds) {
+                            dir('/root/sequoia-provision') {
+                                withEnv(["UPGRADE_MODE=${params.UPGRADE_MODE}",
+                                         "UPGRADE_CB_VERSION=${params.UPGRADE_CB_VERSION}",
+                                         "UPGRADE_CB_BUILD=${params.UPGRADE_CB_BUILD}",
+                                         "UPGRADE_CB_INSTALL_URL=${params.UPGRADE_CB_INSTALL_URL}",
+                                         "UPGRADE_SPARE_HOSTS=${params.UPGRADE_SPARE_HOSTS}",
+                                         "UPGRADE_SWAP_SEED=${params.UPGRADE_SWAP_SEED ?: ''}"]) {
+                                    sh '''
+                                        export ANSIBLE_SSH_PASSWORD="$SSH_PASSWORD"
+                                        ./upgrade.sh \
+                                            --mode "$UPGRADE_MODE" \
+                                            --provider-file provider.yaml \
+                                            --cb-version "$UPGRADE_CB_VERSION" \
+                                            --cb-build "$UPGRADE_CB_BUILD" \
+                                            --cb-install-url "$UPGRADE_CB_INSTALL_URL" \
+                                            --spare-hosts "$UPGRADE_SPARE_HOSTS" \
+                                            ${UPGRADE_SWAP_SEED:+--swap-seed "$UPGRADE_SWAP_SEED"}
+                                    '''
+                                }
+                            }
+                        }
+                        echo ">>> Upgrade completed; refreshing provider file with post-upgrade membership"
+                        sh "cp /root/sequoia-provision/provider.yaml /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml"
+                        runSequoiaWith(params.POST_UPGRADE_TEST_FILE, params.UPGRADE_CB_VERSION, true, params.SKIP_CLEANUP)
                     }
                 }
             }

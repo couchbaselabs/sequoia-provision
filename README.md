@@ -404,6 +404,35 @@ deploy_manual:
     - manual
 ```
 
+## Upgrade
+
+`upgrade.sh` upgrades the cluster that `deploy.sh` provisioned (it reads `provider.yaml`).
+
+```bash
+# Offline: stop Couchbase on every node, dpkg -i the new package over the existing one, start
+./upgrade.sh --mode offline --cb-version 8.5.0 --cb-build 1130
+
+# Online: rolling swap rebalance through a spare node (installed with the new version first).
+# Each swapped-out node is freshly installed with the new version and becomes the next spare.
+# Spare = --spare-hosts, or by default the provider hosts that are not cluster members.
+./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130
+
+# Show the plan only
+./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130 --spare-hosts "172.23.105.50" --dry-run
+```
+
+- The swapped-in node gets the same services and server group as the node it replaces, and takes its
+  position in `provider.yaml`, so sequoia's position-based service mapping still holds after the upgrade.
+- Hosts in `provider.yaml` that are not cluster members (sequoia's inactive nodes) are freshly installed
+  with the new version too (`--skip-inactive` to leave them), so a post-upgrade rebalance-in does not
+  bring the old version back.
+- `provider.yaml` is rewritten with the post-upgrade membership; the original is kept as `provider.yaml.pre_upgrade`.
+- SSH and cloud credentials come from the same environment variables as `deploy.sh`.
+
+In Jenkins, set `UPGRADE_MODE` (`online`/`offline`), `UPGRADE_CB_VERSION`, `UPGRADE_CB_BUILD`,
+`UPGRADE_SPARE_HOSTS` (online) and `POST_UPGRADE_TEST_FILE`. `TEST_FILE` then runs as the pre-upgrade test
+(it must finish within `DURATION`), `upgrade.sh` runs, and `POST_UPGRADE_TEST_FILE` runs with `-skip_setup`.
+
 ## Project Structure
 
 ```
@@ -415,6 +444,8 @@ sequoia-provision/
 ├── install.yml                # Ansible playbook for CB + SGW (combined)
 ├── install_sgw.yml            # Standalone SGW playbook
 ├── uninstall.yml              # Uninstall playbook
+├── upgrade.sh                 # Upgrade a deployed cluster (online rolling swap / offline in-place)
+├── upgrade.yml                # Ansible playbook for offline in-place upgrade (stop, dpkg -i, start)
 ├── Jenkinsfile                # Jenkins pipeline example
 │
 ├── ansible/
