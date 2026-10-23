@@ -255,9 +255,12 @@ pipeline {
                     def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
-                            // UPGRADE_MODE and ENABLE_SHARD_AFFINITY are read by test YAMLs through the {{env `...`}} template
+                            // UPGRADE_MODE, ENABLE_SHARD_AFFINITY and UPGRADE_SOURCE_VERSION (the version installed before the
+                            // upgrade, which the post-upgrade run cannot see in -version) are read by test YAMLs through the
+                            // {{env `...`}} template
                             withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}",
-                                     "ENABLE_SHARD_AFFINITY=${params.ENABLE_SHARD_AFFINITY}"]) {
+                                     "ENABLE_SHARD_AFFINITY=${params.ENABLE_SHARD_AFFINITY}",
+                                     "UPGRADE_SOURCE_VERSION=${params.CB_VERSION}"]) {
                                 sh """
                                     ./sequoia \
                                         -client ${env.SLAVE_IP}:2375 \

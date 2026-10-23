@@ -3,6 +3,9 @@
 // fresh install of the source version, pre-upgrade test (eagle eye restarted for the cluster), upgrade.sh,
 // post-upgrade test. Example: UPGRADE_SOURCE_VERSIONS="7.6.12-6501, 8.0.0-3777" with UPGRADE_CB_VERSION=8.5.0 runs
 // 7.6.12-6501 -> 8.5.0, then 8.0.0-3777 -> 8.5.0.
+// UPGRADE_SOURCE_VERSIONS defaults to ALL: every GA minor version of SOURCE_RELEASE_LINES (7.2, 7.6, 8.0), listed at
+// run time from the releases server by list_source_versions.sh (one path per version, so ALL is many hours).
+// ALL_LATEST_MINOR_VERSIONS is the quick first run: only the newest GA version of each of those lines (today 7.2.9, 7.6.12, 8.0.3).
 pipeline {
     agent none
 
@@ -17,8 +20,17 @@ pipeline {
         choice(name: 'COMPONENT',
                choices: ['component7', 'component3', 'component6', 'mid_scale_component1', 'longevity_cluster_1', 'longevity_cluster_2'],
                description: 'Component pool the paths run on (one after another)')
-        string(name: 'UPGRADE_SOURCE_VERSIONS', defaultValue: '',
-               description: 'Source versions as VERSION-BUILD, comma or space separated, run in this order, e.g. "7.6.12-6501, 8.0.0-3777"')
+        string(name: 'UPGRADE_SOURCE_VERSIONS', defaultValue: 'ALL',
+               description: 'Source versions, comma or space separated, run in this order. ALL = every GA version of SOURCE_RELEASE_LINES; ' +
+                            'ALL_LATEST_MINOR_VERSIONS = only the newest GA version of each release line (one path per line: a quick first run); ' +
+                            'a release line (7.6) = every GA version of it; a version (7.6.12) = its GA build; or VERSION-BUILD for an ' +
+                            'exact build (7.6.12-8946). Can be mixed, e.g. "7.2.8, 7.6, 8.0.1-4792"')
+        string(name: 'SOURCE_RELEASE_LINES', defaultValue: '7.2,7.6,8.0',
+               description: 'Release lines that ALL expands to (and that are listed from the releases server)')
+        string(name: 'EXCLUDE_SOURCE_VERSIONS', defaultValue: '',
+               description: 'Versions to leave out of the list above, e.g. "7.2.0, 7.6.0"')
+        string(name: 'RELEASES_URL', defaultValue: 'http://172.23.126.166/builds/releases',
+               description: 'Releases server the GA versions and their build numbers are read from')
         choice(name: 'UPGRADE_MODE', choices: ['online', 'offline'], description: 'Upgrade mode for every path')
         string(name: 'UPGRADE_CB_VERSION', defaultValue: '8.5.0', description: 'Final version every path upgrades to')
         string(name: 'UPGRADE_CB_BUILD', defaultValue: '', description: 'Final build number')
@@ -52,7 +64,7 @@ pipeline {
         stage('Upgrade paths') {
             steps {
                 script {
-                    def sources = parseSources(params.UPGRADE_SOURCE_VERSIONS)
+                    def sources = resolveSources()
                     if (!params.UPGRADE_CB_VERSION?.trim() || !(params.UPGRADE_CB_BUILD?.trim() || params.UPGRADE_CB_INSTALL_URL?.trim())) {
                         error 'UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required'
                     }
@@ -61,7 +73,8 @@ pipeline {
                     for (int i = 0; i < sources.size(); i++) {
                         labels << sources[i].label
                     }
-                    currentBuild.description = "${params.UPGRADE_MODE} | ${params.COMPONENT} | ${labels.join(', ')} -> ${target}"
+                    def shown = labels.size() > 8 ? "${labels.size()} sources (${labels[0]} .. ${labels[labels.size() - 1]})" : labels.join(', ')
+                    currentBuild.description = "${params.UPGRADE_MODE} | ${params.COMPONENT} | ${shown} -> ${target}"
                     if (params.ENABLE_SHARD_AFFINITY && params.UPGRADE_MODE == 'online') {
                         currentBuild.description += ' | shard affinity'
                     }
@@ -127,6 +140,102 @@ pipeline {
 
 // "7.6.12-6501, 8.0.0-3777" -> [[version: '7.6.12', build: '6501', label: '7.6.12-6501'], ...]
 // No regex Matcher or closures here: CPS cannot serialize a Matcher held across the error step
+// Expands UPGRADE_SOURCE_VERSIONS: ALL, release lines and bare versions need the GA list (list_source_versions.sh on an
+// agent); VERSION-BUILD entries are used as given. EXCLUDE_SOURCE_VERSIONS is applied last.
+def resolveSources() {
+    def text = (params.UPGRADE_SOURCE_VERSIONS ?: '').trim()
+    def entries = text ? text.split(/[,\s]+/) : []
+    def needsList = false
+    for (int i = 0; i < entries.size(); i++) {
+        if (entries[i] && !(entries[i] ==~ /\d+\.\d+\.\d+-\d+/)) {
+            needsList = true
+        }
+    }
+    def listed = []
+    if (needsList) {
+        listed = listReleases()
+    }
+    def wanted = []
+    for (int i = 0; i < entries.size(); i++) {
+        def entry = entries[i]
+        if (!entry) {
+            continue
+        }
+        if (entry == 'ALL') {
+            wanted.addAll(listed)
+        } else if (entry == 'ALL_LATEST_MINOR_VERSIONS') {
+            // the newest GA version of every release line, in SOURCE_RELEASE_LINES order (listed is oldest first per line)
+            def lines = (params.SOURCE_RELEASE_LINES ?: '').trim().split(/[,\s]+/)
+            for (int j = 0; j < lines.size(); j++) {
+                def latest = null
+                for (int k = 0; k < listed.size(); k++) {
+                    if (listed[k].startsWith(lines[j] + '.')) {
+                        latest = listed[k]
+                    }
+                }
+                if (latest == null) {
+                    error "UPGRADE_SOURCE_VERSIONS: ALL_LATEST_MINOR_VERSIONS found no GA versions for release line '${lines[j]}' (releases server ${params.RELEASES_URL})"
+                }
+                wanted << latest
+            }
+        } else if (entry ==~ /\d+\.\d+/) {
+            def found = false
+            for (int j = 0; j < listed.size(); j++) {
+                if (listed[j].startsWith(entry + '.')) {
+                    wanted << listed[j]
+                    found = true
+                }
+            }
+            if (!found) {
+                error "UPGRADE_SOURCE_VERSIONS: no GA versions listed for release line '${entry}' (SOURCE_RELEASE_LINES=${params.SOURCE_RELEASE_LINES})"
+            }
+        } else if (entry ==~ /\d+\.\d+\.\d+/) {
+            def found = false
+            for (int j = 0; j < listed.size(); j++) {
+                if (listed[j].startsWith(entry + '-')) {
+                    wanted << listed[j]
+                    found = true
+                }
+            }
+            if (!found) {
+                error "UPGRADE_SOURCE_VERSIONS: ${entry} is not a GA version listed on ${params.RELEASES_URL} for SOURCE_RELEASE_LINES=${params.SOURCE_RELEASE_LINES}"
+            }
+        } else {
+            wanted << entry   // VERSION-BUILD: validated by parseSources
+        }
+    }
+    def excluded = (params.EXCLUDE_SOURCE_VERSIONS ?: '').trim() ? (params.EXCLUDE_SOURCE_VERSIONS.trim().split(/[,\s]+/) as List) : []
+    def unique = []
+    for (int i = 0; i < wanted.size(); i++) {
+        def version = wanted[i].split('-')[0]
+        if (!unique.contains(wanted[i]) && !excluded.contains(version)) {
+            unique << wanted[i]
+        }
+    }
+    return parseSources(unique.join(' '))
+}
+
+// GA VERSION-BUILD list of SOURCE_RELEASE_LINES from the releases server, oldest first
+def listReleases() {
+    def agentLabel = [component3: 'component-systest-client-3', component6: 'component-systest-client-6',
+                component7: 'component-systest-client-7', mid_scale_component1: 'mid_scale_component-client-1',
+                longevity_cluster_1: 'longevity-systest-client-1', longevity_cluster_2: 'longevity-systest-client-2'][params.COMPONENT]
+    def out = ''
+    node(agentLabel) {
+        dir("source_versions_${env.BUILD_NUMBER}") {
+            deleteDir()
+            checkout scm
+            withEnv(["RELEASES_URL=${params.RELEASES_URL}", "RELEASE_LINES=${params.SOURCE_RELEASE_LINES}"]) {
+                out = sh(returnStdout: true, script: 'bash list_source_versions.sh --url "$RELEASES_URL" --lines "$RELEASE_LINES"').trim()
+            }
+            deleteDir()
+        }
+    }
+    def listed = out ? (out.split('\n') as List) : []
+    echo "GA source versions on ${params.RELEASES_URL} for ${params.SOURCE_RELEASE_LINES}: ${listed.join(', ')}"
+    return listed
+}
+
 def parseSources(String text) {
     def sources = []
     def entries = (text ?: '').trim().split(/[,\s]+/)
@@ -142,7 +251,7 @@ def parseSources(String text) {
         sources << [version: parts[0], build: parts[1], label: entry]
     }
     if (!sources) {
-        error 'UPGRADE_SOURCE_VERSIONS is empty: give at least one VERSION-BUILD, e.g. 7.6.12-6501'
+        error 'No source versions selected: check UPGRADE_SOURCE_VERSIONS and EXCLUDE_SOURCE_VERSIONS (e.g. ALL, ALL_LATEST_MINOR_VERSIONS, 7.6, 7.6.12 or 7.6.12-8946)'
     }
     return sources
 }
