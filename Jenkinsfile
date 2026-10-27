@@ -25,6 +25,7 @@ pipeline {
         string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the upgrade version (overrides version/build)')
         string(name: 'UPGRADE_SPARE_HOSTS', defaultValue: '', description: 'Optional spare node IPs for online upgrade. Empty: the pool hosts the test keeps out of the cluster are used (e.g. the 12th host of component7 when the scope uses 11)')
         string(name: 'UPGRADE_SWAP_SEED', defaultValue: '', description: 'Optional upgrade.sh --swap-seed: replays the node order of an earlier run (printed as --swap-seed N). Empty: random order')
+        choice(name: 'UPGRADE_DEPTH', choices: ['full', 'quick'], description: 'full: every block of the post/pre-upgrade tests. quick: skips plasma holes, BHIVE churn/recall, the post-upgrade rebalances and the long query suite (setup, upgrade and post-upgrade validations only). Read by test YAMLs as {{env `UPGRADE_DEPTH`}}')
         booleanParam(name: 'ENABLE_SHARD_AFFINITY', defaultValue: false, description: 'Online upgrade only, CB_VERSION 7.6+: the pre-upgrade test sets indexer.settings.enable_shard_affinity=true before creating indexes, so the swap rebalances move indexes file-based. Ignored for UPGRADE_MODE none/offline and for CB_VERSION below 7.6. Read by test YAMLs as {{env `ENABLE_SHARD_AFFINITY`}}')
         string(name: 'POST_UPGRADE_TEST_FILE', defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_post_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Test (and -scope) run after the upgrade with -skip_setup; use the same scope as TEST_FILE')
@@ -260,6 +261,7 @@ pipeline {
                             // {{env `...`}} template
                             withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}",
                                      "ENABLE_SHARD_AFFINITY=${params.ENABLE_SHARD_AFFINITY}",
+                                     "UPGRADE_DEPTH=${params.UPGRADE_DEPTH ?: 'full'}",
                                      "UPGRADE_SOURCE_VERSION=${params.CB_VERSION}"]) {
                                 sh """
                                     ./sequoia \

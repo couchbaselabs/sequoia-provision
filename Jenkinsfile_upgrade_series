@@ -32,6 +32,8 @@ pipeline {
         string(name: 'RELEASES_URL', defaultValue: 'http://172.23.126.166/builds/releases',
                description: 'Releases server the GA versions and their build numbers are read from')
         choice(name: 'UPGRADE_MODE', choices: ['online', 'offline'], description: 'Upgrade mode for every path')
+        choice(name: 'UPGRADE_DEPTH', choices: ['full', 'quick'],
+               description: 'Test depth for every path. full: everything. quick: skips plasma holes, BHIVE churn/recall, the post-upgrade rebalances and the long query suite (setup, upgrade and post-upgrade validations only)')
         string(name: 'UPGRADE_CB_VERSION', defaultValue: '8.5.0', description: 'Final version every path upgrades to')
         string(name: 'UPGRADE_CB_BUILD', defaultValue: '', description: 'Final build number')
         string(name: 'UPGRADE_CB_INSTALL_URL', defaultValue: '', description: 'Optional install URL for the final version (overrides version/build)')
@@ -74,7 +76,7 @@ pipeline {
                         labels << sources[i].label
                     }
                     def shown = labels.size() > 8 ? "${labels.size()} sources (${labels[0]} .. ${labels[labels.size() - 1]})" : labels.join(', ')
-                    currentBuild.description = "${params.UPGRADE_MODE} | ${params.COMPONENT} | ${shown} -> ${target}"
+                    currentBuild.description = "${params.UPGRADE_MODE} | ${params.COMPONENT} | ${shown} -> ${target} | ${params.UPGRADE_DEPTH}"
                     if (params.ENABLE_SHARD_AFFINITY && params.UPGRADE_MODE == 'online') {
                         currentBuild.description += ' | shard affinity'
                     }
@@ -104,6 +106,7 @@ pipeline {
                                     string(name: 'UPGRADE_SPARE_HOSTS', value: params.UPGRADE_SPARE_HOSTS),
                                     string(name: 'UPGRADE_SWAP_SEED', value: params.UPGRADE_SWAP_SEED ?: ''),
                                     booleanParam(name: 'ENABLE_SHARD_AFFINITY', value: params.ENABLE_SHARD_AFFINITY),
+                                    string(name: 'UPGRADE_DEPTH', value: params.UPGRADE_DEPTH),
                                     string(name: 'POST_UPGRADE_TEST_FILE', value: params.POST_UPGRADE_TEST_FILE),
                                     string(name: 'SCALE', value: params.SCALE),
                                     string(name: 'LOG_LEVEL', value: params.LOG_LEVEL),
