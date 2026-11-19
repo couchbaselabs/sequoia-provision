@@ -31,6 +31,9 @@
     get_url: url="{{build_url}}" dest="{{deb_path}}"
 
 - hosts: "{{ target_hosts }}"
+  # One host at a time: never stop Couchbase on more than one node simultaneously, so a direct
+  # multi-host run (or a group target) stays a rolling upgrade instead of a full cluster outage.
+  serial: 1
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
     deb_path: "/tmp/couchbase-upgrade.deb"

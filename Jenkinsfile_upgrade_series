@@ -218,11 +218,17 @@ def resolveSources() {
     return parseSources(unique.join(' '))
 }
 
+// Jenkins agent label for a component pool (the client where that pool's work runs)
+@NonCPS
+def agentLabelFor(String component) {
+    return [component3: 'component-systest-client-3', component6: 'component-systest-client-6',
+            component7: 'component-systest-client-7', mid_scale_component1: 'mid_scale_component-client-1',
+            longevity_cluster_1: 'longevity-systest-client-1', longevity_cluster_2: 'longevity-systest-client-2'][component]
+}
+
 // GA VERSION-BUILD list of SOURCE_RELEASE_LINES from the releases server, oldest first
 def listReleases() {
-    def agentLabel = [component3: 'component-systest-client-3', component6: 'component-systest-client-6',
-                component7: 'component-systest-client-7', mid_scale_component1: 'mid_scale_component-client-1',
-                longevity_cluster_1: 'longevity-systest-client-1', longevity_cluster_2: 'longevity-systest-client-2'][params.COMPONENT]
+    def agentLabel = agentLabelFor(params.COMPONENT)
     def out = ''
     node(agentLabel) {
         dir("source_versions_${env.BUILD_NUMBER}") {
@@ -264,9 +270,7 @@ def parseSources(String text) {
 
 // Downstream consoles hold the real outcome: sequoia exits 0 even when a test step fails.
 def buildReport(List paths, String target) {
-    def agentLabel = [component3: 'component-systest-client-3', component6: 'component-systest-client-6',
-                component7: 'component-systest-client-7', mid_scale_component1: 'mid_scale_component-client-1',
-                longevity_cluster_1: 'longevity-systest-client-1', longevity_cluster_2: 'longevity-systest-client-2'][params.COMPONENT]
+    def agentLabel = agentLabelFor(params.COMPONENT)
     def reports = []
     node(agentLabel) {
         dir("upgrade_series_report_${env.BUILD_NUMBER}") {
@@ -276,15 +280,20 @@ def buildReport(List paths, String target) {
                 def report = [label: path.label, source: path.source, target: target, result: path.result,
                               url: path.url, readError: '']
                 if (path.run) {
-                    def text = readConsole(path.run)
-                    if (text == null) {
-                        text = fetchConsole(path.url, "console_${i + 1}.txt")
+                    // Stream the build log straight from Jenkins when we can; otherwise fall back to the
+                    // downloaded consoleText file.
+                    def parsed = parseRun(path.run)
+                    if (parsed == null) {
+                        def text = fetchConsole(path.url, "console_${i + 1}.txt")
+                        if (text != null) {
+                            parsed = parseConsole(new StringReader(text))
+                        }
                     }
-                    if (text == null) {
+                    if (parsed == null) {
                         report.readError = 'console not readable: set CONSOLE_CREDS_ID (anonymous read was refused), or ' +
-                                           'approve RunWrapper.getRawBuild and Run.getLog in script approval'
+                                           'approve RunWrapper.getRawBuild and Run.getLogReader in script approval'
                     } else {
-                        report.putAll(parseConsole(text))
+                        report.putAll(parsed)
                     }
                 }
                 report.verdict = verdict(report)
@@ -315,12 +324,20 @@ def buildReport(List paths, String target) {
     }
 }
 
+// Parse a downstream build's log by streaming it from Jenkins (no full-log String in memory).
+// Returns the parsed map, or null if the raw build / its log reader is not accessible.
 @NonCPS
-def readConsole(run) {
+def parseRun(run) {
+    def reader = null
     try {
-        return run.getRawBuild().getLog()
+        reader = run.getRawBuild().getLogReader()
+        return parseConsole(reader)
     } catch (Exception e) {
         return null
+    } finally {
+        if (reader != null) {
+            try { reader.close() } catch (Exception ignored) { }
+        }
     }
 }
 
@@ -355,7 +372,7 @@ def fetchConsole(String buildUrl, String file) {
 // ("INFO [action] passed with N warning(s)", "WARNING|ERROR [action] msg", "action: N failure(s)"), container
 // errors are sequoia's "Error occurred on container - image:[args]" (+ "expected error occurred" for expect_error).
 @NonCPS
-def parseConsole(String text) {
+def parseConsole(Reader reader) {
     def phase = 'setup'
     def actions = [:]          // "phase|action" -> [phase, action, passed, warnings (set), errors (set), failed]
     def containers = []        // [phase, image, action, expected, usage, detail]
@@ -376,7 +393,9 @@ def parseConsole(String text) {
     def toolLine = ~/(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) (INFO|WARNING|ERROR) \[([a-z_]+)\] (.*)/
     def failureLine = ~/\b([a-z_]+): (\d+) failure\(s\)/
     def containerLine = ~/Error occurred on container - ([^:\[]+(?::[^:\[]+)?):\[(.*?)\]?$/
-    for (raw in text.split('\n')) {
+    // Stream the log line by line (the downstream console can be hundreds of MB): never hold the whole
+    // log, nor a split-out array of all its lines, in memory at once.
+    reader.eachLine { raw ->
         def line = raw.replace('\r', '')
         if (line.contains('>>> Starting Couchbase deployment')) {
             phase = 'install'
@@ -456,7 +475,7 @@ def parseConsole(String text) {
                     a.passed++
                 }
             }
-            continue
+            return   // next line (closure return == loop continue)
         }
         def f = (line =~ failureLine)
         if (f.find() && !line.contains('Error occurred')) {
@@ -468,7 +487,7 @@ def parseConsole(String text) {
                 lastContainer.detail = f.group(0) + ' (see Failures)'
                 lastContainer.summarized = true
             }
-            continue
+            return
         }
         def c = (line =~ containerLine)
         if (c.find()) {
@@ -478,7 +497,7 @@ def parseConsole(String text) {
                              args: args.length() > 300 ? args.substring(0, 300) + '...' : args,
                              expected: false, usage: false, summarized: false, detail: '']
             containers << lastContainer
-            continue
+            return
         }
         if (lastContainer != null) {
             if (line.contains('expected error occurred')) {

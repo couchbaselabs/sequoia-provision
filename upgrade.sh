@@ -145,26 +145,8 @@ if [[ -z "$CB_FLAVOR" ]]; then
     esac
 fi
 
-# GA builds are purged from latestbuilds after a while and kept under releases/<version>/ without the build number
-# in the file name: when the latestbuilds package is gone, install that one instead
-resolve_cb_install_url() {
-    [[ -n "$CB_INSTALL_URL" || -z "$CB_BUILD" ]] && return 0
-    local builds="http://172.23.126.166/builds"
-    local latest="$builds/latestbuilds/couchbase-server/$CB_FLAVOR/$CB_BUILD/couchbase-server-enterprise_${CB_VERSION}-${CB_BUILD}-linux_amd64.deb"
-    local release="$builds/releases/$CB_VERSION/couchbase-server-enterprise_${CB_VERSION}-linux_amd64.deb"
-    local code
-    code=$(curl -s -o /dev/null -I -m 30 -w '%{http_code}' "$latest" || true)
-    if [[ "$code" == "404" ]]; then
-        code=$(curl -s -o /dev/null -I -m 30 -w '%{http_code}' "$release" || true)
-        if [[ "$code" == "200" ]]; then
-            CB_INSTALL_URL=$release
-            echo -e "${YELLOW}${CB_VERSION}-${CB_BUILD} is no longer in latestbuilds; installing the GA package $release${NC}"
-        else
-            echo -e "${RED}${CB_VERSION}-${CB_BUILD} is neither in latestbuilds nor in releases ($release: HTTP $code)${NC}" >&2
-            exit 1
-        fi
-    fi
-}
+# shellcheck source=cb_install_url.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cb_install_url.sh"
 resolve_cb_install_url
 
 if [[ "$REST_SCHEME" == "https" ]]; then REST_PORT=18091; else REST_PORT=8091; fi
@@ -236,7 +218,9 @@ wait_for_healthy_cluster() {
     local orch=$1 deadline=$((SECONDS + HEALTH_TIMEOUT)) members bad
     while (( SECONDS < deadline )); do
         if members=$(cluster_members "$orch" 2>/dev/null); then
-            bad=$(awk -F'\t' -v v="$CB_VERSION" '$5 != "healthy" || index($4, v) != 1 {print $1" ("$4", "$5")"}' <<< "$members")
+            # Match the target version exactly or as the "VERSION-build" prefix, so e.g. target 7.6.1
+            # is not satisfied by a node still on 7.6.12.
+            bad=$(awk -F'\t' -v v="$CB_VERSION" '$5 != "healthy" || !($4 == v || index($4, v "-") == 1) {print $1" ("$4", "$5")"}' <<< "$members")
             if [[ -z "$bad" ]]; then
                 log "${GREEN}All $(wc -l <<< "$members" | tr -d ' ') nodes healthy on $CB_VERSION${NC}"
                 return 0
@@ -255,7 +239,7 @@ wait_for_node_upgraded() {
     local orch=$1 node=$2 deadline=$((SECONDS + HEALTH_TIMEOUT)) row
     while (( SECONDS < deadline )); do
         row=$(cluster_members "$orch" 2>/dev/null | awk -F'\t' -v ip="$node" '$1 == ip')
-        if [[ -n "$row" ]] && awk -F'\t' -v v="$CB_VERSION" '$5 == "healthy" && index($4, v) == 1 {ok=1} END {exit !ok}' <<< "$row"; then
+        if [[ -n "$row" ]] && awk -F'\t' -v v="$CB_VERSION" '$5 == "healthy" && ($4 == v || index($4, v "-") == 1) {ok=1} END {exit !ok}' <<< "$row"; then
             log "${GREEN}$node healthy on $(cut -f4 <<< "$row")${NC}"
             return 0
         fi

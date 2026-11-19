@@ -163,6 +163,13 @@ pipeline {
                 script {
                     echo ">>> SKIP_INSTALL parameter value: ${params.SKIP_INSTALL}"
 
+                    // Fail fast, before the (multi-hour) install and pre-upgrade test run, when an upgrade is
+                    // requested without a target version/build.
+                    if (params.UPGRADE_MODE != 'none' &&
+                        (!params.UPGRADE_CB_VERSION?.trim() || !(params.UPGRADE_CB_BUILD?.trim() || params.UPGRADE_CB_INSTALL_URL?.trim()))) {
+                        error "UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required for UPGRADE_MODE=${params.UPGRADE_MODE}"
+                    }
+
                     // Shared by deploy.sh and upgrade.sh (which freshly installs spare and swapped-out nodes)
                     def provisionCreds = [
                         usernamePassword(credentialsId: 'root', usernameVariable: 'SSH_USERNAME', passwordVariable: 'SSH_PASSWORD'),
@@ -468,9 +475,7 @@ pipeline {
                     // TEST_FILE above was the pre-upgrade run (it captures the query baseline under /data on
                     // this slave); upgrade the cluster, then run the post-upgrade test against it.
                     if (params.UPGRADE_MODE != 'none') {
-                        if (!params.UPGRADE_CB_VERSION?.trim() || !(params.UPGRADE_CB_BUILD?.trim() || params.UPGRADE_CB_INSTALL_URL?.trim())) {
-                            error "UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required for UPGRADE_MODE=${params.UPGRADE_MODE}"
-                        }
+                        // Required target version/build already validated up front, before install.
                         currentBuild.description += " | Upgrade (${params.UPGRADE_MODE}): ${params.UPGRADE_CB_VERSION} - ${params.UPGRADE_CB_BUILD}"
                         if (params.ENABLE_SHARD_AFFINITY && params.UPGRADE_MODE == 'online') {
                             currentBuild.description += " | shard affinity"
