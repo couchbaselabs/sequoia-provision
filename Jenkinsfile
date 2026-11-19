@@ -260,7 +260,7 @@ pipeline {
                     // sequoia treats -repeat 0 with -duration > 0 as "repeat until the duration expires", so an
                     // upgrade run also drops the duration: each test runs exactly one cycle.
                     def duration = params.UPGRADE_MODE == 'none' ? params.DURATION : '0'
-                    def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup ->
+                    def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup, boolean skipTeardown ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
                             // UPGRADE_MODE, ENABLE_SHARD_AFFINITY and UPGRADE_SOURCE_VERSION (the version installed before the
@@ -281,7 +281,7 @@ pipeline {
                                         -version ${version} \
                                         -skip_setup=${skipSetup} \
                                         -skip_test=${params.SKIP_TEST} \
-                                        -skip_teardown=${params.SKIP_TEARDOWN} \
+                                        -skip_teardown=${skipTeardown} \
                                         -skip_cleanup=${skipCleanup} \
                                         -collect_on_error=${params.COLLECT_ON_ERROR} \
                                         -stop_on_error=${params.STOP_ON_ERROR} \
@@ -293,9 +293,13 @@ pipeline {
                     }
                     // For an upgrade the pre-upgrade test's background workload (mutations + queries) must keep
                     // running through the upgrade, so its containers are not cleaned up when that run ends; the
-                    // post-upgrade test removes them as its first step.
+                    // post-upgrade test removes them as its first step. Teardown (which drops buckets and removes
+                    // nodes) is always forced off for an upgrade's pre-run regardless of SKIP_TEARDOWN, since it
+                    // would destroy exactly the cluster/data upgrade.sh then upgrades; the post-upgrade run honors
+                    // the user's SKIP_TEARDOWN setting.
                     def runSequoia = { runSequoiaWith(params.TEST_FILE, params.CB_VERSION, params.SKIP_SETUP,
-                                                      params.UPGRADE_MODE != 'none' || params.SKIP_CLEANUP) }
+                                                      params.UPGRADE_MODE != 'none' || params.SKIP_CLEANUP,
+                                                      params.UPGRADE_MODE != 'none' ? true : params.SKIP_TEARDOWN) }
 
                     // The log parser job tracks one cluster, keyed by its master_node param.
                     // deploy.sh writes the pool's master_node=true host first into provider.yaml, and
@@ -505,7 +509,7 @@ pipeline {
                         }
                         echo ">>> Upgrade completed; refreshing provider file with post-upgrade membership"
                         sh "cp /root/sequoia-provision/provider.yaml /opt/godev/src/github.com/couchbaselabs/sequoia/providers/file/provider.yml"
-                        runSequoiaWith(params.POST_UPGRADE_TEST_FILE, params.UPGRADE_CB_VERSION, true, params.SKIP_CLEANUP)
+                        runSequoiaWith(params.POST_UPGRADE_TEST_FILE, params.UPGRADE_CB_VERSION, true, params.SKIP_CLEANUP, params.SKIP_TEARDOWN)
                     }
                 }
             }

@@ -120,12 +120,17 @@ pipeline {
                                 path.run = b
                                 path.result = b.result
                                 path.url = b.absoluteUrl
-                                echo ">>> ${path.label}: ${path.result} (${path.url})"
-                                if (path.result != 'SUCCESS') {
-                                    unstable("${path.label} ended ${path.result}")
+                                // sequoia exits 0 even when a test step fails, so the downstream build result
+                                // alone can read SUCCESS on a failed validation. Parse the console now and gate
+                                // the series on that verdict, not just the build result.
+                                def v = evaluatePath(path, target)
+                                echo ">>> ${path.label}: build ${path.result}, verdict ${v} (${path.url})"
+                                if (v != 'PASSED') {
+                                    unstable("${path.label}: ${v} (build ${path.result})")
                                 }
                             }
-                            if (path.result == 'ABORTED' || (path.result != 'SUCCESS' && !params.CONTINUE_ON_FAILURE)) {
+                            if (path.result == 'ABORTED' ||
+                                ((path.result != 'SUCCESS' || path.verdict == 'FAILED') && !params.CONTINUE_ON_FAILURE)) {
                                 break
                             }
                         }
@@ -268,6 +273,26 @@ def parseSources(String text) {
 
 // ------------------------------------------------------------------ report
 
+// Verdict for a just-finished path from its parsed console, so the series can stop on a failed validation
+// before launching (and reinstalling the cluster for) the next path. Reads the log controller-side only
+// (parseRun, no node); when that is unavailable the verdict is left UNKNOWN and the Report stage, which
+// runs on an agent, still resolves it via the curl fallback. The parsed data is cached on the path so the
+// Report stage does not read the log twice.
+def evaluatePath(Map path, String target) {
+    def report = [result: path.result, source: path.source, target: target, readError: '']
+    if (path.run && path.result == 'SUCCESS') {
+        def parsed = parseRun(path.run)
+        if (parsed != null) {
+            path.parsed = parsed
+            report.putAll(parsed)
+        } else {
+            report.readError = 'console not readable at launch time (resolved in the Report stage)'
+        }
+    }
+    path.verdict = verdict(report)
+    return path.verdict
+}
+
 // Downstream consoles hold the real outcome: sequoia exits 0 even when a test step fails.
 def buildReport(List paths, String target) {
     def agentLabel = agentLabelFor(params.COMPONENT)
@@ -280,9 +305,12 @@ def buildReport(List paths, String target) {
                 def report = [label: path.label, source: path.source, target: target, result: path.result,
                               url: path.url, readError: '']
                 if (path.run) {
-                    // Stream the build log straight from Jenkins when we can; otherwise fall back to the
-                    // downloaded consoleText file.
-                    def parsed = parseRun(path.run)
+                    // Reuse what the launch loop already parsed; otherwise stream the log from Jenkins, and
+                    // only then fall back to the downloaded consoleText file.
+                    def parsed = path.parsed
+                    if (parsed == null) {
+                        parsed = parseRun(path.run)
+                    }
                     if (parsed == null) {
                         def text = fetchConsole(path.url, "console_${i + 1}.txt")
                         if (text != null) {
@@ -341,6 +369,22 @@ def parseRun(run) {
     }
 }
 
+// Largest downstream console this fallback will pull into a controller-side String. The streaming
+// path (parseRun/getLogReader) has no such limit; beyond this we refuse rather than risk the heap and
+// tell the operator to approve streaming instead.
+FALLBACK_MAX_MB = 50
+
+// true if the downloaded console is small enough to readFile safely
+def consoleWithinLimit(String file) {
+    def bytes = (sh(returnStdout: true, script: "wc -c < '${file}'").trim() ?: '0') as Long
+    if (bytes > FALLBACK_MAX_MB * 1024L * 1024L) {
+        echo ">>> ${file} is ${bytes} bytes (> ${FALLBACK_MAX_MB} MB): refusing the readFile fallback to protect " +
+             "the controller heap. Approve RunWrapper.getRawBuild and Run.getLogReader so the log is streamed instead."
+        return false
+    }
+    return true
+}
+
 def fetchConsole(String buildUrl, String file) {
     if (!params.CONSOLE_CREDS_ID?.trim()) {
         // This Jenkins lets anonymous users read consoles
@@ -348,7 +392,7 @@ def fetchConsole(String buildUrl, String file) {
         withEnv(["CONSOLE_URL=${buildUrl}consoleText", "CONSOLE_FILE=${file}"]) {
             rc = sh(returnStatus: true, script: 'curl -sSf --connect-timeout 15 --max-time 600 -o "$CONSOLE_FILE" "$CONSOLE_URL"')
         }
-        return rc == 0 ? readFile(file) : null
+        return (rc == 0 && consoleWithinLimit(file)) ? readFile(file) : null
     }
     def ok = false
     withCredentials([usernamePassword(credentialsId: params.CONSOLE_CREDS_ID, usernameVariable: 'CONSOLE_USER',
@@ -365,7 +409,7 @@ def fetchConsole(String buildUrl, String file) {
             ''') == 0
         }
     }
-    return ok ? readFile(file) : null
+    return (ok && consoleWithinLimit(file)) ? readFile(file) : null
 }
 
 // Phases follow the downstream Jenkinsfile's own markers; tool lines are the gsi_query_upgrade Checks output
@@ -463,16 +507,22 @@ def parseConsole(Reader reader) {
                      errors: new LinkedHashSet(), failed: false]
                 actions[key] = a
             }
-            // Sequoia can print a failed container's output twice: every distinct timestamped line counts once
-            if (seen.add(m.group(0))) {
-                def msg = m.group(4)
-                if (m.group(2) == 'ERROR') {
-                    a.errors << msg
-                    a.failed = true
-                } else if (m.group(2) == 'WARNING') {
-                    a.warnings << msg
-                } else if (msg.startsWith('passed with ')) {
-                    a.passed++
+            // Only result-bearing lines (ERROR, WARNING, INFO "passed with ...") are recorded and deduped;
+            // ordinary INFO lines are discarded without being kept in `seen`, which would otherwise grow
+            // unbounded (timestamps make the lines near-unique) and hold hundreds of MB on verbose consoles.
+            def level = m.group(2)
+            def msg = m.group(4)
+            if (level == 'ERROR' || level == 'WARNING' || msg.startsWith('passed with ')) {
+                // Sequoia can print a failed container's output twice: every distinct timestamped line counts once
+                if (seen.add(m.group(0))) {
+                    if (level == 'ERROR') {
+                        a.errors << msg
+                        a.failed = true
+                    } else if (level == 'WARNING') {
+                        a.warnings << msg
+                    } else {
+                        a.passed++
+                    }
                 }
             }
             return   // next line (closure return == loop continue)

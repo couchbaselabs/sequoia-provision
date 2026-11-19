@@ -153,15 +153,19 @@ if [[ "$REST_SCHEME" == "https" ]]; then REST_PORT=18091; else REST_PORT=8091; f
 
 # ---------------------------------------------------------------- REST helpers
 
+# Bounded so a stalled connection cannot hang a polling waiter (which only checks its deadline between
+# requests) or block auto-failover restoration indefinitely.
+REST_CURL_TIMEOUTS=(--connect-timeout 15 --max-time 120)
+
 rest_get() {
-    curl -sS -f -k -u "$REST_USER:$REST_PASSWORD" "$REST_SCHEME://$1:$REST_PORT$2"
+    curl -sS -f -k "${REST_CURL_TIMEOUTS[@]}" -u "$REST_USER:$REST_PASSWORD" "$REST_SCHEME://$1:$REST_PORT$2"
 }
 
 # rest_post HOST PATH [curl -d args...]; fails with the response body on non-2xx
 rest_post() {
     local host=$1 path=$2 out code
     shift 2
-    out=$(curl -sS -k -u "$REST_USER:$REST_PASSWORD" -w '\n%{http_code}' -X POST "$REST_SCHEME://$host:$REST_PORT$path" "$@")
+    out=$(curl -sS -k "${REST_CURL_TIMEOUTS[@]}" -u "$REST_USER:$REST_PASSWORD" -w '\n%{http_code}' -X POST "$REST_SCHEME://$host:$REST_PORT$path" "$@")
     code=$(tail -n1 <<< "$out")
     if [[ "$code" != 2* ]]; then
         echo -e "${RED}POST $path on $host failed ($code): $(sed '$d' <<< "$out")${NC}" >&2
@@ -178,6 +182,12 @@ cluster_members() {
 
 member_field() {  # member_field ORCH IP COLUMN
     cluster_members "$1" | awk -F'\t' -v ip="$2" -v col="$3" '$1 == ip {print $col}'
+}
+
+# Every node in /pools/default as "ip<TAB>clusterMembership", regardless of membership (active,
+# inactiveFailed, inactiveAdded)
+all_node_memberships() {
+    rest_get "$1" /pools/default | jq -r '.nodes[] | [(.hostname | sub(":[0-9]+$"; "")), .clusterMembership] | @tsv'
 }
 
 # Data and index paths a node uses ("<data>\t<index>"), from its own /nodes/self
@@ -238,7 +248,8 @@ wait_for_healthy_cluster() {
 wait_for_node_upgraded() {
     local orch=$1 node=$2 deadline=$((SECONDS + HEALTH_TIMEOUT)) row
     while (( SECONDS < deadline )); do
-        row=$(cluster_members "$orch" 2>/dev/null | awk -F'\t' -v ip="$node" '$1 == ip')
+        # A transient REST error must retry until HEALTH_TIMEOUT, not abort under set -e/pipefail.
+        row=$(cluster_members "$orch" 2>/dev/null | awk -F'\t' -v ip="$node" '$1 == ip') || row=""
         if [[ -n "$row" ]] && awk -F'\t' -v v="$CB_VERSION" '$5 == "healthy" && ($4 == v || index($4, v "-") == 1) {ok=1} END {exit !ok}' <<< "$row"; then
             log "${GREEN}$node healthy on $(cut -f4 <<< "$row")${NC}"
             return 0
@@ -292,7 +303,9 @@ run_playbook() {  # run_playbook PLAYBOOK "IP IP" [extra -e args...]
                -e "target_hosts=$GROUP_NAME" -e "FLAVOR=$CB_FLAVOR" -e "VER=$CB_VERSION" -e "BUILD_NO=$CB_BUILD")
     [[ -n "$CB_INSTALL_URL" ]] && cmd+=(-e "URL=$CB_INSTALL_URL")
     cmd+=("$@")
-    log "Running: ${cmd[*]} on [$hosts]"
+    # Do not log ${cmd[*]}: callers (fresh_install) append -e aws_secret_access_key=.../azure_storage_key=...
+    # extra-vars, which would print cloud credentials in plaintext on standalone (unmasked) CLI runs.
+    log "Running ansible-playbook $playbook (FLAVOR=$CB_FLAVOR VER=$CB_VERSION BUILD_NO=$CB_BUILD) on [$hosts]"
     "${cmd[@]}"
 }
 
@@ -349,6 +362,17 @@ read -r -a SPARES <<< "$SPARE_HOSTS"
 for ip in "${SPARES[@]}"; do
     [[ " ${MEMBERS[*]} " == *" $ip "* ]] && die "Spare $ip is already a cluster member"
 done
+
+# cluster_members lists only "active" nodes, so a provider/spare host that is a non-active cluster member
+# (inactiveFailed / inactiveAdded) looks like an unused host here and would be wiped as a spare or
+# reinstalled after an offline upgrade, destroying recoverable data. Refuse until its membership is
+# resolved by hand (recover or eject).
+all_memberships=$(all_node_memberships "$ORCH") || die "Cannot read cluster membership from $ORCH"
+for ip in "${INACTIVE[@]}" "${SPARES[@]}"; do
+    membership=$(awk -F'\t' -v ip="$ip" '$1 == ip {print $2}' <<< "$all_memberships")
+    [[ -z "$membership" ]] || die "Host $ip is a non-active cluster member ($membership); recover or eject it before upgrading"
+done
+
 SPARE_SOURCE="--spare-hosts"
 if [[ "$MODE" == "online" && ${#SPARES[@]} -eq 0 ]]; then
     # No explicit spares: use the provider hosts the test keeps out of the cluster
@@ -379,18 +403,21 @@ for ip in "${MEMBERS[@]:1}"; do
     svc=$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")
     if [[ ",$svc," == *",kv,"* ]]; then KV_NODES+=("$ip"); else OTHER_NODES+=("$ip"); fi
 done
+# The same-service node the master is swapped back in for (online); empty if no other member runs the
+# master's services. Used in the swap loop (to make the master's reinstall the partner's replacement) and
+# when restoring the master to slot 0.
+PARTNER=""
 if [[ "$MODE" == "online" ]]; then
     # the node the master replaces: first other member with the master's services
-    partner=""
     for ip in "${KV_NODES[@]}" "${OTHER_NODES[@]}"; do
-        [[ "$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")" == "$master_svc" ]] && { partner=$ip; break; }
+        [[ "$(awk -F'\t' -v ip="$ip" '$1 == ip {print $3}' <<< "$members")" == "$master_svc" ]] && { PARTNER=$ip; break; }
     done
-    if [[ -n "$partner" ]]; then
+    if [[ -n "$PARTNER" ]]; then
         rest=()
-        for ip in "${KV_NODES[@]}"; do [[ "$ip" != "$partner" ]] && rest+=("$ip"); done
+        for ip in "${KV_NODES[@]}"; do [[ "$ip" != "$PARTNER" ]] && rest+=("$ip"); done
         others=()
-        for ip in "${OTHER_NODES[@]}"; do [[ "$ip" != "$partner" ]] && others+=("$ip"); done
-        KV_NODES=("$MASTER" "$partner" "${rest[@]}")
+        for ip in "${OTHER_NODES[@]}"; do [[ "$ip" != "$PARTNER" ]] && others+=("$ip"); done
+        KV_NODES=("$MASTER" "$PARTNER" "${rest[@]}")
         OTHER_NODES=("${others[@]}")
     else
         echo -e "${YELLOW}No other member runs the master's services ($master_svc): $MASTER will come back with other services${NC}"
@@ -497,16 +524,36 @@ else
         log "${GREEN}$new ($(member_field "$orch" "$new" 4)) replaced $old${NC}"
         for i in "${!FINAL_MEMBERS[@]}"; do [[ "${FINAL_MEMBERS[$i]}" == "$old" ]] && FINAL_MEMBERS[$i]=$new; done
 
-        # The removed node is still on the old version: reinstall it as the next spare
+        # The removed node is still on the old version: reinstall it as a spare.
         fresh_install "$old"
-        SPARES+=("$old")
+        if [[ "$old" == "$MASTER" && -n "$PARTNER" ]]; then
+            # Make the master's reinstall the very next node swapped in, so it replaces its same-service
+            # partner (SWAP_ORDER[1]) and rejoins with the master's own services, regardless of how many
+            # other spares are queued. Without this the master would be reused for an arbitrary later slot
+            # and come back as the wrong service type.
+            SPARES=("$old" "${SPARES[@]}")
+        else
+            SPARES+=("$old")
+        fi
     done
-    # keep the master first in the provider file (sequoia's orchestrator) when it is back in the cluster
-    if [[ " ${FINAL_MEMBERS[*]} " == *" $MASTER "* ]]; then
-        reordered=("$MASTER")
-        for ip in "${FINAL_MEMBERS[@]}"; do [[ "$ip" != "$MASTER" ]] && reordered+=("$ip"); done
-        FINAL_MEMBERS=("${reordered[@]}")
-    else
+    # Restore the master to slot 0 (sequoia's orchestrator / the log parser's master_node) without
+    # disturbing any slot's service mapping. Each FINAL_MEMBERS slot i keeps MEMBERS[i]'s original service
+    # (swaps are in place), so moving the master to slot 0 is only safe as an exchange of two slots whose
+    # services are equal. With a same-service partner the master re-entered at the partner's slot, which
+    # has the master's service, so slot 0 and the master's slot match; exchange just those two. Otherwise
+    # leave the master where it is rather than rotate the whole prefix (which would misalign the positional
+    # post-upgrade scope).
+    m_idx=-1
+    for i in "${!FINAL_MEMBERS[@]}"; do [[ "${FINAL_MEMBERS[$i]}" == "$MASTER" ]] && m_idx=$i; done
+    if (( m_idx > 0 )); then
+        svc0=$master_svc
+        svc_m=$(awk -F'\t' -v ip="${MEMBERS[$m_idx]}" '$1 == ip {print $3}' <<< "$members")
+        if [[ "$svc0" == "$svc_m" ]]; then
+            tmp=${FINAL_MEMBERS[0]}; FINAL_MEMBERS[0]=${FINAL_MEMBERS[$m_idx]}; FINAL_MEMBERS[$m_idx]=$tmp
+        else
+            echo -e "${YELLOW}$MASTER rejoined as a '${svc_m}' node but slot 0 is '${svc0}'; leaving it at slot $((m_idx + 1)) so each provider slot keeps its service (orchestrator is ${FINAL_MEMBERS[0]})${NC}"
+        fi
+    elif (( m_idx < 0 )); then
         echo -e "${YELLOW}$MASTER is not a cluster member after the upgrade${NC}"
     fi
     wait_for_healthy_cluster "${FINAL_MEMBERS[0]}"

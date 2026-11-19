@@ -1,12 +1,16 @@
 ---
 # Offline (in-place) Upgrade Playbook
-# Stops Couchbase Server on the target hosts, installs the new package over the existing one with dpkg
+# Stops Couchbase Server on the target host, installs the new package over the existing one with dpkg
 # (data, config and cluster membership are kept) and starts it again. Unlike install.yml nothing is
-# uninstalled or wiped. upgrade.sh --mode offline runs it for one node at a time (and waits for that node to be
-# healthy before the next); given several hosts, the default linear strategy stops every host before any is
-# upgraded.
-# Usage: ansible-playbook -i ansible/hosts upgrade.yml -e "target_hosts=couchbase_servers" -e "FLAVOR=totoro" -e "VER=8.5.0" -e "BUILD_NO=1130"
-# Normally driven by upgrade.sh --mode offline.
+# uninstalled or wiped.
+#
+# Intended to be driven by upgrade.sh --mode offline, which runs it for ONE node at a time and, between
+# nodes, waits over REST for that node to be healthy on the new version before moving on. This playbook
+# itself only gates on port 8091 (which comes up before KV warmup finishes), so on its own it does NOT
+# guarantee that only one node is down during a multi-node upgrade. It therefore refuses to run against
+# more than one host (see the assert below); for a rolling multi-node upgrade use ./upgrade.sh --mode offline.
+#
+# Usage (single host): ansible-playbook -i ansible/hosts upgrade.yml -e "target_hosts=<ip-or-host>" -e "FLAVOR=totoro" -e "VER=8.5.0" -e "BUILD_NO=1130"
 
 # Download first, while the cluster is still up, so the downtime is only the dpkg install
 - hosts: "{{ target_hosts }}"
@@ -22,6 +26,18 @@
     deb_path: "/tmp/couchbase-upgrade.deb"
   remote_user: root
   tasks:
+  # This playbook's only readiness gate is port 8091, which is up before KV warmup completes, so it cannot
+  # itself keep "only one node down" across several hosts. Refuse a multi-host run (fail before any node is
+  # touched) and point at upgrade.sh, which adds the per-node REST health gate for rolling upgrades.
+  - name: refuse a multi-host run (use upgrade.sh for rolling upgrades)
+    run_once: true
+    assert:
+      that: "ansible_play_hosts_all | length == 1"
+      fail_msg: >-
+        upgrade.yml was given {{ ansible_play_hosts_all | length }} hosts
+        ({{ ansible_play_hosts_all | join(', ') }}); it only guarantees one node down at a time for a
+        single host. Use ./upgrade.sh --mode offline for a rolling multi-node upgrade.
+
   - name: cleanup old upgrade pkg
     shell: "rm -f {{deb_path}}"
 
@@ -31,8 +47,8 @@
     get_url: url="{{build_url}}" dest="{{deb_path}}"
 
 - hosts: "{{ target_hosts }}"
-  # One host at a time: never stop Couchbase on more than one node simultaneously, so a direct
-  # multi-host run (or a group target) stays a rolling upgrade instead of a full cluster outage.
+  # Single host only (enforced by the assert in the first play); serial: 1 keeps that explicit so a one-host
+  # run never stops more than that node at a time.
   serial: 1
   vars:
     ver_no: "{{VER|default('4.5.0')}}"
@@ -76,6 +92,8 @@
     register: version_after
 
   - name: verify upgraded version
+    # Match the whole version or its "VERSION-build" form (anchored), so e.g. ver_no 7.6.1 is not
+    # satisfied by an installed 7.6.12-... package.
     assert:
-      that: "ver_no in version_after.stdout"
+      that: "version_after.stdout is match((ver_no | regex_escape) ~ '(-|$)')"
       fail_msg: "{{ inventory_hostname }} has {{ version_after.stdout }} after upgrade, expected {{ ver_no }}"
