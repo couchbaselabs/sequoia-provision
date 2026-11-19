@@ -29,6 +29,13 @@ pipeline {
         booleanParam(name: 'ENABLE_SHARD_AFFINITY', defaultValue: false, description: 'Online upgrade only, CB_VERSION 7.6+: the pre-upgrade test sets indexer.settings.enable_shard_affinity=true before creating indexes, so the swap rebalances move indexes file-based. Ignored for UPGRADE_MODE none/offline and for CB_VERSION below 7.6. Read by test YAMLs as {{env `ENABLE_SHARD_AFFINITY`}}')
         string(name: 'POST_UPGRADE_TEST_FILE', defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_post_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Test (and -scope) run after the upgrade with -skip_setup; use the same scope as TEST_FILE')
+        text(name: 'TEST_ENV', defaultValue: '',
+             description: 'Optional extra environment for the test YAMLs, as YAML or JSON (a map of KEY: value), ' +
+                          'exported for both the pre- and post-upgrade sequoia runs and read as {{env `KEY`}}. ' +
+                          'Use this for the long tail of test tuning flags instead of adding a parameter each time, ' +
+                          'e.g.  GSI_BHIVE: true\\nINDEX_REPLICAS: 2 . Keys must be valid env var names; pipeline-managed ' +
+                          'variables (UPGRADE_MODE, ENABLE_SHARD_AFFINITY, UPGRADE_DEPTH, UPGRADE_SOURCE_VERSION, ...) ' +
+                          'may not be overridden here.')
         string(name: 'SGW_VERSION', defaultValue: '3.2.0', description: 'Sync Gateway version')
         string(name: 'SGW_BUILD', defaultValue: '1234', description: 'Sync Gateway build number')
         string(name: 'CB_INSTALL_URL', defaultValue: '', description: 'Couchbase Server install URL')
@@ -260,6 +267,12 @@ pipeline {
                     // sequoia treats -repeat 0 with -duration > 0 as "repeat until the duration expires", so an
                     // upgrade run also drops the duration: each test runs exactly one cycle.
                     def duration = params.UPGRADE_MODE == 'none' ? params.DURATION : '0'
+                    // Extra pass-through env for the test YAMLs (parsed and validated once, up front, so a bad
+                    // TEST_ENV fails before install/test rather than at the sequoia step).
+                    def testEnv = testEnvEntries()
+                    if (testEnv) {
+                        echo ">>> TEST_ENV for the test runs: ${testEnv.join(', ')}"
+                    }
                     def runSequoiaWith = { String testFile, String version, boolean skipSetup, boolean skipCleanup, boolean skipTeardown ->
                         echo ">>> Starting sequoia tests (${testFile}, version ${version})..."
                         dir('/opt/godev/src/github.com/couchbaselabs/sequoia') {
@@ -269,7 +282,7 @@ pipeline {
                             withEnv(["DOCKER_CONFIG=${dockerCfgDir}", "UPGRADE_MODE=${params.UPGRADE_MODE}",
                                      "ENABLE_SHARD_AFFINITY=${params.ENABLE_SHARD_AFFINITY}",
                                      "UPGRADE_DEPTH=${params.UPGRADE_DEPTH ?: 'full'}",
-                                     "UPGRADE_SOURCE_VERSION=${params.CB_VERSION}"]) {
+                                     "UPGRADE_SOURCE_VERSION=${params.CB_VERSION}"] + testEnv) {
                                 sh """
                                     ./sequoia \
                                         -client ${env.SLAVE_IP}:2375 \
@@ -515,4 +528,42 @@ pipeline {
             }
         }
     }
+}
+
+// Parse TEST_ENV (a YAML or JSON map of extra KEY: value environment for the test YAMLs) into a list of
+// "KEY=value" strings for withEnv. Keys must be valid environment variable names, and keys the pipeline
+// manages itself are rejected so a free-form override can't silently change pipeline behavior. Returns []
+// when TEST_ENV is empty. Needs the Pipeline Utility Steps plugin (readYaml), which also parses JSON.
+def testEnvEntries() {
+    def raw = (params.TEST_ENV ?: '').trim()
+    if (!raw) {
+        return []
+    }
+    def parsed
+    try {
+        parsed = readYaml(text: raw)
+    } catch (Exception e) {
+        error "TEST_ENV is not valid YAML/JSON: ${e.message}"
+    }
+    if (!(parsed instanceof Map)) {
+        error "TEST_ENV must be a map of KEY: value (e.g. 'GSI_BHIVE: true'); got ${parsed?.getClass()?.simpleName}"
+    }
+    def reserved = ['DOCKER_CONFIG', 'UPGRADE_MODE', 'ENABLE_SHARD_AFFINITY', 'UPGRADE_DEPTH',
+                    'UPGRADE_SOURCE_VERSION', 'UPGRADE_CB_VERSION', 'UPGRADE_CB_BUILD', 'UPGRADE_CB_INSTALL_URL',
+                    'UPGRADE_SPARE_HOSTS', 'UPGRADE_SWAP_SEED']
+    def entries = []
+    parsed.each { k, v ->
+        def key = k?.toString()?.trim()
+        if (!key) {
+            error "TEST_ENV has an entry with an empty key"
+        }
+        if (!(key ==~ /[A-Za-z_][A-Za-z0-9_]*/)) {
+            error "TEST_ENV key '${key}' is not a valid environment variable name"
+        }
+        if (reserved.contains(key)) {
+            error "TEST_ENV may not set '${key}': it is pipeline-managed, use its own parameter"
+        }
+        entries << "${key}=${v == null ? '' : v}"
+    }
+    return entries
 }

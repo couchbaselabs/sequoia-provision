@@ -433,6 +433,44 @@ In Jenkins, set `UPGRADE_MODE` (`online`/`offline`), `UPGRADE_CB_VERSION`, `UPGR
 `UPGRADE_SPARE_HOSTS` (online) and `POST_UPGRADE_TEST_FILE`. `TEST_FILE` then runs as the pre-upgrade test
 (it must finish within `DURATION`), `upgrade.sh` runs, and `POST_UPGRADE_TEST_FILE` runs with `-skip_setup`.
 
+### Extra test environment (`TEST_ENV`)
+
+The upgrade job and the upgrade-series job take an optional `TEST_ENV` parameter: a YAML or JSON map of
+`KEY: value` pairs that is exported for both the pre- and post-upgrade sequoia runs and read by the test
+YAMLs via the `{{env ...}}` template. Use it for the long tail of suite-specific test flags instead of
+adding a new Jenkins parameter (and its downstream forwarding) each time. For example (the keys below are
+illustrative placeholders — use the keys your test YAMLs actually read):
+
+```yaml
+GSI_BHIVE: true
+INDEX_REPLICAS: 2
+```
+
+The keys are defined entirely by the test YAMLs (which live in the `sequoia` repo), so document each new
+one next to the test that introduces it. Keys must be valid environment-variable names, and
+pipeline-managed variables — `UPGRADE_MODE`, `ENABLE_SHARD_AFFINITY`, `UPGRADE_DEPTH`,
+`UPGRADE_SOURCE_VERSION`, and the `UPGRADE_CB_*` / `UPGRADE_SPARE_HOSTS` / `UPGRADE_SWAP_SEED` set — are
+rejected (use their own parameters). A malformed `TEST_ENV` fails the build up front.
+
+### Upgrade series (`Jenkinsfile_upgrade_series`)
+
+Runs the upgrade job once per source version (e.g. every GA `7.6.x -> 8.5.0`), one path after another on the
+same pool, and archives an HTML report with each path's pass/fail verdict. Because sequoia exits `0` even
+when a test step fails, the series reads each downstream build's console to decide the real verdict.
+
+**Script Approval requirement.** Reading a downstream build's log uses `RunWrapper.getRawBuild()` and
+`Run.getLogReader()`. An administrator must approve both signatures in **Manage Jenkins → In-process Script
+Approval**. Until they are approved, the series still works but is degraded:
+
+- it falls back to fetching each console over HTTP (`…/consoleText`) into a file that is bounded at 50 MB
+  per console, instead of streaming the log directly; and
+- the live per-path verdict used to gate `CONTINUE_ON_FAILURE` degrades to `UNKNOWN`, so the series does
+  **not** stop early on a failed path — the failure is still caught in the final HTML report, just not in
+  time to skip the remaining paths.
+
+If anonymous console reads are refused on your Jenkins, set `CONSOLE_CREDS_ID` to a user + API token
+credential instead.
+
 ## Project Structure
 
 ```

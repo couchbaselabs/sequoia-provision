@@ -47,6 +47,10 @@ pipeline {
         string(name: 'POST_UPGRADE_TEST_FILE',
                defaultValue: 'tests/upgrade/gsi_query/test_gsi_query_post_upgrade.yml -scope tests/upgrade/gsi_query/scope_gsi_query_upgrade.yml',
                description: 'Post-upgrade test (and -scope); use the same scope as TEST_FILE')
+        text(name: 'TEST_ENV', defaultValue: '',
+             description: 'Optional extra environment for the test YAMLs (YAML/JSON map of KEY: value), forwarded ' +
+                          'to every path and read as {{env `KEY`}}. Same value for all paths. See the downstream ' +
+                          'job TEST_ENV for the rules (valid env names only; pipeline-managed keys are rejected).')
         string(name: 'SCALE', defaultValue: '1', description: 'Scale parameter for sequoia')
         string(name: 'LOG_LEVEL', defaultValue: '2', description: 'Sequoia log level (2+ shows the tool output)')
         string(name: 'SEQ_PROVISION_BRANCH', defaultValue: 'upgrade-support', description: 'sequoia-provision branch for the downstream builds (needs upgrade.sh)')
@@ -70,6 +74,9 @@ pipeline {
                     if (!params.UPGRADE_CB_VERSION?.trim() || !(params.UPGRADE_CB_BUILD?.trim() || params.UPGRADE_CB_INSTALL_URL?.trim())) {
                         error 'UPGRADE_CB_VERSION and UPGRADE_CB_BUILD (or UPGRADE_CB_INSTALL_URL) are required'
                     }
+                    // Fail fast on a malformed TEST_ENV before launching any path (each downstream job validates
+                    // it too, but checking here avoids starting the whole series on a typo).
+                    validateTestEnv()
                     def target = params.UPGRADE_CB_BUILD?.trim() ? "${params.UPGRADE_CB_VERSION}-${params.UPGRADE_CB_BUILD}" : params.UPGRADE_CB_VERSION
                     def labels = []
                     for (int i = 0; i < sources.size(); i++) {
@@ -108,6 +115,7 @@ pipeline {
                                     booleanParam(name: 'ENABLE_SHARD_AFFINITY', value: params.ENABLE_SHARD_AFFINITY),
                                     string(name: 'UPGRADE_DEPTH', value: params.UPGRADE_DEPTH),
                                     string(name: 'POST_UPGRADE_TEST_FILE', value: params.POST_UPGRADE_TEST_FILE),
+                                    text(name: 'TEST_ENV', value: params.TEST_ENV ?: ''),
                                     string(name: 'SCALE', value: params.SCALE),
                                     string(name: 'LOG_LEVEL', value: params.LOG_LEVEL),
                                     string(name: 'SEQ_PROVISION_BRANCH', value: params.SEQ_PROVISION_BRANCH),
@@ -268,6 +276,36 @@ def parseSources(String text) {
         error 'No source versions selected: check UPGRADE_SOURCE_VERSIONS and EXCLUDE_SOURCE_VERSIONS (e.g. ALL, ALL_LATEST_MINOR_VERSIONS, 7.6, 7.6.12 or 7.6.12-8946)'
     }
     return sources
+}
+
+// Parse-and-validate TEST_ENV (forwarded unchanged to every downstream build) so the series stops on a bad
+// value instead of launching paths that each fail the same way. Mirrors the downstream job's rules.
+def validateTestEnv() {
+    def raw = (params.TEST_ENV ?: '').trim()
+    if (!raw) {
+        return
+    }
+    def parsed
+    try {
+        parsed = readYaml(text: raw)
+    } catch (Exception e) {
+        error "TEST_ENV is not valid YAML/JSON: ${e.message}"
+    }
+    if (!(parsed instanceof Map)) {
+        error "TEST_ENV must be a map of KEY: value (e.g. 'GSI_BHIVE: true'); got ${parsed?.getClass()?.simpleName}"
+    }
+    def reserved = ['DOCKER_CONFIG', 'UPGRADE_MODE', 'ENABLE_SHARD_AFFINITY', 'UPGRADE_DEPTH',
+                    'UPGRADE_SOURCE_VERSION', 'UPGRADE_CB_VERSION', 'UPGRADE_CB_BUILD', 'UPGRADE_CB_INSTALL_URL',
+                    'UPGRADE_SPARE_HOSTS', 'UPGRADE_SWAP_SEED']
+    parsed.each { k, v ->
+        def key = k?.toString()?.trim()
+        if (!key || !(key ==~ /[A-Za-z_][A-Za-z0-9_]*/)) {
+            error "TEST_ENV key '${key}' is not a valid environment variable name"
+        }
+        if (reserved.contains(key)) {
+            error "TEST_ENV may not set '${key}': it is pipeline-managed, use its own parameter"
+        }
+    }
 }
 
 
