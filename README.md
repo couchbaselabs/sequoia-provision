@@ -447,10 +447,12 @@ INDEX_REPLICAS: 2
 ```
 
 The keys are defined entirely by the test YAMLs (which live in the `sequoia` repo), so document each new
-one next to the test that introduces it. Keys must be valid environment-variable names, and
-pipeline-managed variables — `UPGRADE_MODE`, `ENABLE_SHARD_AFFINITY`, `UPGRADE_DEPTH`,
-`UPGRADE_SOURCE_VERSION`, and the `UPGRADE_CB_*` / `UPGRADE_SPARE_HOSTS` / `UPGRADE_SWAP_SEED` set — are
-rejected (use their own parameters). A malformed `TEST_ENV` fails the build up front.
+one next to the test that introduces it. For example, GSI shard affinity (online upgrades, source version
+7.6+) is enabled with `ENABLE_SHARD_AFFINITY: true` — read by the GSI/Query upgrade test's `requires:`
+gates. Keys must be valid environment-variable names, and pipeline-managed variables — `UPGRADE_MODE`,
+`UPGRADE_DEPTH`, `UPGRADE_SOURCE_VERSION`, and the `UPGRADE_CB_*` / `UPGRADE_SPARE_HOSTS` /
+`UPGRADE_SWAP_SEED` set — are rejected (use their own parameters). A malformed `TEST_ENV` fails the build
+up front.
 
 ### Upgrade series (`Jenkinsfile_upgrade_series`)
 
