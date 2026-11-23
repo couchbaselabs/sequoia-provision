@@ -420,13 +420,12 @@ def parseRun(run) {
     }
 }
 
-// Largest downstream console this fallback will pull into a controller-side String. The streaming
-// path (parseRun/getLogReader) has no such limit; beyond this we refuse rather than risk the heap and
-// tell the operator to approve streaming instead.
-FALLBACK_MAX_MB = 50
-
-// true if the downloaded console is small enough to readFile safely
+// true if the downloaded console is small enough to readFile safely. The cap is the largest downstream
+// console this fallback will pull into a controller-side String; the streaming path (parseRun/getLogReader)
+// has no such limit. It is a local (not a script-level binding) because a declarative pipeline never runs
+// stray top-level assignments after the pipeline{} block, so a script-scope var would be undefined here.
 def consoleWithinLimit(String file) {
+    final long FALLBACK_MAX_MB = 50
     def bytes = (sh(returnStdout: true, script: "wc -c < '${file}'").trim() ?: '0') as Long
     if (bytes > FALLBACK_MAX_MB * 1024L * 1024L) {
         echo ">>> ${file} is ${bytes} bytes (> ${FALLBACK_MAX_MB} MB): refusing the readFile fallback to protect " +
