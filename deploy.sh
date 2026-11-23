@@ -198,6 +198,10 @@ if [[ -z "$CB_FLAVOR" ]]; then
     echo -e "${GREEN}Auto-detected CB_FLAVOR: $CB_FLAVOR (from version $CB_VERSION)${NC}"
 fi
 
+# shellcheck source=cb_install_url.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cb_install_url.sh"
+resolve_cb_install_url
+
 # Validate input method
 USE_QE_CONFIG=false
 USE_MANUAL_IPS=false

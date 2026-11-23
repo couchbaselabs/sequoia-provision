@@ -404,6 +404,75 @@ deploy_manual:
     - manual
 ```
 
+## Upgrade
+
+`upgrade.sh` upgrades the cluster that `deploy.sh` provisioned (it reads `provider.yaml`).
+
+```bash
+# Offline: stop Couchbase on every node, dpkg -i the new package over the existing one, start
+./upgrade.sh --mode offline --cb-version 8.5.0 --cb-build 1130
+
+# Online: rolling swap rebalance through a spare node (installed with the new version first).
+# Each swapped-out node is freshly installed with the new version and becomes the next spare.
+# Spare = --spare-hosts, or by default the provider hosts that are not cluster members.
+./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130
+
+# Show the plan only
+./upgrade.sh --mode online --cb-version 8.5.0 --cb-build 1130 --spare-hosts "172.23.105.50" --dry-run
+```
+
+- The swapped-in node gets the same services and server group as the node it replaces, and takes its
+  position in `provider.yaml`, so sequoia's position-based service mapping still holds after the upgrade.
+- Hosts in `provider.yaml` that are not cluster members (sequoia's inactive nodes) are freshly installed
+  with the new version too (`--skip-inactive` to leave them), so a post-upgrade rebalance-in does not
+  bring the old version back.
+- `provider.yaml` is rewritten with the post-upgrade membership; the original is kept as `provider.yaml.pre_upgrade`.
+- SSH and cloud credentials come from the same environment variables as `deploy.sh`.
+
+In Jenkins, set `UPGRADE_MODE` (`online`/`offline`), `UPGRADE_CB_VERSION`, `UPGRADE_CB_BUILD`,
+`UPGRADE_SPARE_HOSTS` (online) and `POST_UPGRADE_TEST_FILE`. `TEST_FILE` then runs as the pre-upgrade test
+(it must finish within `DURATION`), `upgrade.sh` runs, and `POST_UPGRADE_TEST_FILE` runs with `-skip_setup`.
+
+### Extra test environment (`TEST_ENV`)
+
+The upgrade job and the upgrade-series job take an optional `TEST_ENV` parameter: a YAML or JSON map of
+`KEY: value` pairs that is exported for both the pre- and post-upgrade sequoia runs and read by the test
+YAMLs via the `{{env ...}}` template. Use it for the long tail of suite-specific test flags instead of
+adding a new Jenkins parameter (and its downstream forwarding) each time. For example (the keys below are
+illustrative placeholders — use the keys your test YAMLs actually read):
+
+```yaml
+GSI_BHIVE: true
+INDEX_REPLICAS: 2
+```
+
+The keys are defined entirely by the test YAMLs (which live in the `sequoia` repo), so document each new
+one next to the test that introduces it. For example, GSI shard affinity (online upgrades, source version
+7.6+) is enabled with `ENABLE_SHARD_AFFINITY: true` — read by the GSI/Query upgrade test's `requires:`
+gates. Keys must be valid environment-variable names, and pipeline-managed variables — `UPGRADE_MODE`,
+`UPGRADE_DEPTH`, `UPGRADE_SOURCE_VERSION`, and the `UPGRADE_CB_*` / `UPGRADE_SPARE_HOSTS` /
+`UPGRADE_SWAP_SEED` set — are rejected (use their own parameters). A malformed `TEST_ENV` fails the build
+up front.
+
+### Upgrade series (`Jenkinsfile_upgrade_series`)
+
+Runs the upgrade job once per source version (e.g. every GA `7.6.x -> 8.5.0`), one path after another on the
+same pool, and archives an HTML report with each path's pass/fail verdict. Because sequoia exits `0` even
+when a test step fails, the series reads each downstream build's console to decide the real verdict.
+
+**Script Approval requirement.** Reading a downstream build's log uses `RunWrapper.getRawBuild()` and
+`Run.getLogReader()`. An administrator must approve both signatures in **Manage Jenkins → In-process Script
+Approval**. Until they are approved, the series still works but is degraded:
+
+- it falls back to fetching each console over HTTP (`…/consoleText`) into a file that is bounded at 50 MB
+  per console, instead of streaming the log directly; and
+- the live per-path verdict used to gate `CONTINUE_ON_FAILURE` degrades to `UNKNOWN`, so the series does
+  **not** stop early on a failed path — the failure is still caught in the final HTML report, just not in
+  time to skip the remaining paths.
+
+If anonymous console reads are refused on your Jenkins, set `CONSOLE_CREDS_ID` to a user + API token
+credential instead.
+
 ## Project Structure
 
 ```
@@ -415,6 +484,8 @@ sequoia-provision/
 ├── install.yml                # Ansible playbook for CB + SGW (combined)
 ├── install_sgw.yml            # Standalone SGW playbook
 ├── uninstall.yml              # Uninstall playbook
+├── upgrade.sh                 # Upgrade a deployed cluster (online rolling swap / offline in-place)
+├── upgrade.yml                # Ansible playbook for offline in-place upgrade (stop, dpkg -i, start)
 ├── Jenkinsfile                # Jenkins pipeline example
 │
 ├── ansible/
